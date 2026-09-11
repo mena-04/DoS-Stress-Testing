@@ -1,0 +1,45 @@
+# Both required mechanisms: per-client rate limiting and queue-cap shedding.
+# This is the headline mitigation-on configuration.
+#
+# Every threshold here is a placeholder until the backend's capacity is
+# measured. Calibrate against a concurrency sweep with prefix caching off and
+# randomised prompts: the knee of the p95 curve sets global_max_inflight, and
+# upstream_max_num_seqs must match the value vLLM was launched with.
+mode: ratelimit_queue
+
+upstream:
+  base_url: http://127.0.0.1:8000
+
+rate_limit:
+  requests_per_sec: 5.0
+  requests_burst: 10.0
+  tokens_per_sec: 2000.0
+  tokens_burst: 8000.0
+  client_max_inflight: 4
+  max_tokens_ceiling: 1024
+
+backpressure:
+  # Keep this at or near the backend's --max-num-seqs. Setting it much higher
+  # moves the queue inside vLLM, where the gateway cannot reorder or shed it:
+  # a smoke run with 48 slots against a backend admitting 8 left pressure at
+  # zero throughout while legitimate p95 reached 4.0s.
+  global_max_inflight: 32
+  upstream_max_num_seqs: 32
+  queue_wait_ms: 200
+  # Slots only cheap requests may use. This is what holds up when per-client
+  # limits dilute under identity rotation, because it partitions capacity by
+  # request cost rather than by client.
+  reserved_cheap_slots: 8
+  cheap_cost_threshold: 512
+  upstream_waiting_high: 24.0
+  upstream_waiting_low: 8.0
+  occupancy_high: 0.9
+  occupancy_low: 0.6
+
+fairshare:
+  window_s: 10.0
+  share_multiplier: 1.25
+  grace_cost_share: 0.15
+
+logging:
+  run_id: mitigated
