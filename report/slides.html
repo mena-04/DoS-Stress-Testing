@@ -226,20 +226,21 @@
   </div>
 
   <div class="claim">
-    Under an eight-way flood of 512-token generations, turning the gateway on cut legitimate p95
-    latency from <strong>9.55 s to 1.32 s</strong> while raising the number of legitimate requests
-    answered from <strong>3 to 15</strong> &mdash; and rejected none of them. Latency and throughput
-    improving together is what separates protecting users from refusing them.
+    Against a Locust flood of 28 attacker identities on a real T4, the queue cap did exactly its
+    job &mdash; peak backend queue <strong>24 &rarr; 0</strong> &mdash; and the gateway still refused
+    <strong>92%</strong> of legitimate requests, while its p95 <em>improved</em> to 0.63 s. One
+    mis-set cost threshold did that. We know because the harness measures legitimate success, not
+    latency.
   </div>
 
   <div class="kpis">
-    <div class="kpi"><div class="v">7.2&times;</div><div class="k">lower legitimate p95 under attack</div></div>
-    <div class="kpi"><div class="v">5.0&times;</div><div class="k">more legitimate requests served</div></div>
-    <div class="kpi"><div class="v">50%</div><div class="k">of attacker traffic rejected</div></div>
-    <div class="kpi"><div class="v">0</div><div class="k">legitimate requests rejected</div></div>
+    <div class="kpi"><div class="v">24 &rarr; 0</div><div class="k">peak backend queue depth, mitigation on</div></div>
+    <div class="kpi"><div class="v">8.3%</div><div class="k">of legitimate requests succeeded</div></div>
+    <div class="kpi"><div class="v">0.63 s</div><div class="k">the p95 that failure reported</div></div>
+    <div class="kpi"><div class="v">49 : 322</div><div class="k">token-cost gap one threshold missed</div></div>
   </div>
 
-  <div class="stamp"><span>Measured on the GPU, not simulated</span><span>01 / 05</span></div>
+  <div class="stamp"><span>Measured on the GPU, from raw per-request logs</span><span>01 / 05</span></div>
 </section>
 
 <!-- ======================= 2. OBJECTIVE ======================= -->
@@ -326,13 +327,13 @@
   <div class="body">
   <div class="flow">
     <div class="box">
-      <span class="hd">Load generator</span>
-      <span class="bd">normal &middot; sudden spike &middot; sustained flood &middot; low-and-slow.
-      Sends <code>X-Client-ID</code>. Never retries a rejection.</span>
+      <span class="hd">Locust load generator</span>
+      <span class="bd">normal &middot; spike &middot; flood &middot; low-and-slow. Closed-loop virtual
+      users, sends <code>X-Client-ID</code>, never retries a rejection.</span>
     </div>
     <div class="arrow">&rarr;</div>
     <div class="box mid">
-      <span class="hd">Mitigation gateway :8080</span>
+      <span class="hd">Mitigation gateway :8090</span>
       <span class="bd">FastAPI reverse proxy. Three admission layers. Writes every decision and
       its reason.</span>
     </div>
@@ -365,9 +366,10 @@
       <h4>Queue cap with fast rejection</h4>
       <p><code>global_max_inflight</code> is held <strong>at</strong> the backend's
       <code>--max-num-seqs</code>. Admit more and the queue still forms, but inside vLLM where it
-      cannot be reordered or shed. Past the cap a request waits 200 ms, then gets a 503. Under
-      pressure, shedding is fair-share by recent token cost, with a reserved lane partitioned on
-      request cost rather than identity.</p>
+      cannot be reordered or shed. Past the cap a request waits 200 ms, then gets a 503. A reserved
+      lane partitioned on <strong>request cost</strong>, not identity, is what survives ID rotation
+      &mdash; but only while its threshold sits between the two cost distributions. Slide 5 is what
+      happens when it does not.</p>
     </div>
     <div class="mech">
       <div class="tagn">MECHANISM 03 &middot; OPTIONAL</div>
@@ -415,57 +417,59 @@
   <div class="shead">
     <span class="num">03</span>
     <h2>Solution validation</h2>
-    <span class="tag">four negative results, four design changes</span>
+    <span class="tag">the harness is the deliverable that worked</span>
   </div>
 
   <div class="body">
   <div class="cols">
     <div class="c40">
       <div class="setup">
-        <div class="row"><span class="k">Target service</span><span class="v">Real vLLM 0.29.0 on a Tesla T4. Real weights, real Prometheus metrics.</span></div>
-        <div class="row"><span class="k">Load profiles</span><span class="v">Normal, sudden spike, sustained flood, low-and-slow, plus a two-client cheap-vs-expensive probe.</span></div>
-        <div class="row"><span class="k">Ablation</span><span class="v">Four configs on one flag: <code>off</code>, <code>ratelimit</code>, <code>ratelimit_queue</code>, <code>full</code>.</span></div>
-        <div class="row"><span class="k">Automated tests</span><span class="v">75 unit and integration tests, including end-to-end runs over real sockets.</span></div>
-        <div class="row"><span class="k">GPU-free repro</span><span class="v">A stand-in calibrated to the measured T4 timing, so saturation reproduces on a laptop and in CI.</span></div>
-        <div class="row"><span class="k">Statistical care</span><span class="v">Nearest-rank percentiles over successful requests only; a fast 503 is a failure, not a quick success.</span></div>
+        <div class="row"><span class="k">Target service</span><span class="v">Real vLLM 0.29.0, Qwen2.5-0.5B, Tesla T4, <code>--max-num-seqs 8</code>. Real weights, real Prometheus metrics.</span></div>
+        <div class="row"><span class="k">Load</span><span class="v">Locust, four profiles. Headline pair is <code>flood</code>: 4 legitimate users against 28 attackers for 30 s, seed 42.</span></div>
+        <div class="row"><span class="k">Paired arms</span><span class="v">Same generator, same GPU, one config flag. <code>off</code> traverses the gateway too, so the proxy hop is in both.</span></div>
+        <div class="row"><span class="k">Evidence</span><span class="v">Every number recomputed from raw per-request logs, not console output. 211 state samples, <b>0% stale</b>.</span></div>
+        <div class="row"><span class="k">Statistical care</span><span class="v">Percentiles over successful requests only, and always beside the success rate. A fast 503 is a failure, not a quick success.</span></div>
+        <div class="row"><span class="k">Automated tests</span><span class="v">74 CPU tests against a stand-in calibrated to the measured T4 timing. Passing them is not GPU evidence.</span></div>
       </div>
     </div>
 
     <div class="c55">
-      <p class="mut" style="margin-bottom:4mm;">The mitigation was the easy half. Most of the work
-      went into tests that appeared to pass while measuring nothing.</p>
+      <p class="mut" style="margin-bottom:4mm;">The mitigation was the easy half. Every finding
+      below came from a test that looked like it was passing.</p>
 
       <div class="find">
         <span class="id">a</span>
-        <span class="bd"><b>The first flood did not overload anything.</b> p50 5.603 s, p95 5.700 s,
-        max 5.701 s &mdash; three values inside 0.1 s means one batch and no queue. Prefix caching
-        made 50 identical prompts nearly free, and KV capacity exceeded demand 9&times;.
-        <span class="fix">Changed: randomised prompts, caching off, a concurrency sweep.</span></span>
+        <span class="bd"><b>The shipped thresholds failed the flood.</b> The queue cap held
+        perfectly &mdash; peak backend queue 0 &mdash; while <b>88 of 96</b> legitimate requests got
+        <code>503 queue_timeout</code>. Cause on slide 5: legitimate cost 48&ndash;49, attacker
+        320&ndash;322, <code>cheap_cost_threshold</code> 512, so both counted as cheap and the
+        reserved lane partitioned nothing.
+        <span class="fix">Open: set the threshold from the measured distribution, then rerun.</span></span>
       </div>
       <div class="find">
         <span class="id">b</span>
         <span class="bd"><b>Queue depth read zero when the queue was deepest.</b> The sampler
         scraped <code>/metrics</code> inside a bare <code>except: pass</code> and read a missing
         value as <code>0</code> &mdash; and <code>/metrics</code> is what stops answering under load.
-        <span class="fix">Changed: an absent snapshot is unknown, never empty, and staleness is
-        recorded.</span></span>
+        <span class="fix">Fixed: absent is unknown, never empty. The flood pair above records 0%
+        staleness, which is how we can trust its queue of 0.</span></span>
       </div>
       <div class="find">
         <span class="id">c</span>
-        <span class="bd"><b>Identity rotation defeated every per-client defence.</b> Eight client
-        IDs, zero rejections, legitimate p95 4.0 s. Not a bug &mdash; per-client buckets dilute under
-        rotation by construction.
-        <span class="fix">Changed: a reserved lane partitioned on request cost, which never asks
-        who is calling.</span></span>
+        <span class="bd"><b>Identity rotation defeats every per-client defence.</b> Confirmed
+        again at 28 attacker identities: each one sits inside its own budget, so the buckets never
+        fire and the global cap degenerates to first-come-first-served &mdash; which the attacker
+        wins, arriving 20&times; more often.
+        <span class="fix">Design answer: partition on cost, not identity. See (a) for the
+        condition that makes it work.</span></span>
       </div>
       <div class="find">
         <span class="id">d</span>
-        <span class="bd"><b>Fair-share inverted under long requests.</b> Cost aged out of a 10 s
-        window while the request ran 36 s, so the attacker holding every slot was charged
-        <code>0.0</code> and the steady cheap client measured as 100% &mdash; legitimate traffic took
-        <b>45.5% rejection</b>.
-        <span class="fix">Changed: in-flight cost stays charged until completion, then is
-        released.</span></span>
+        <span class="bd"><b>Fair-share inverts under long requests.</b> Cost aged out of the 10 s
+        window while the request ran 36 s, so an attacker holding every slot was charged
+        <code>0.0</code> and a steady cheap client measured as 100%.
+        <span class="fix">Diagnosed and patched, <b>not merged</b>: this snapshot has 74 tests and
+        does not contain the fix.</span></span>
       </div>
     </div>
   </div>
@@ -474,18 +478,18 @@
   <div class="band">
     <div>
       <div class="bh">Reproduce &mdash; no GPU</div>
-      <div class="bt"><code>pip install -e ".[dev]"</code><br>
-      <code>pytest</code> &nbsp;&rarr;&nbsp; 75 passed<br>
-      <code>python -m gateway.fake_vllm --max-num-seqs 8</code></div>
+      <div class="bt"><code>pip install -e ".[dev,report]"</code><br>
+      <code>pytest</code> &nbsp;&rarr;&nbsp; 74 passed<br>
+      Or just open <code>results/</code>: the CSVs and charts are committed.</div>
     </div>
     <div>
       <div class="bh">Reproduce &mdash; on the GPU</div>
-      <div class="bt">Run <code>integration.ipynb</code> top to bottom: it installs vLLM, serves
-      Qwen2.5-0.5B, then drives the same load through
-      <code>configs/off.yaml</code> and <code>configs/ratelimit_queue.yaml</code>.</div>
+      <div class="bt">Run <code>final_demo.ipynb</code> with <code>RUN_LIVE_DEMO = True</code>: it
+      serves real vLLM, runs the paired OFF/ON flood under new run IDs, and packages the raw logs
+      into <code>results/demo_evidence.zip</code>.</div>
     </div>
     <div>
-      <div class="bh">One run excluded, and recorded</div>
+      <div class="bh">One run kept out of the results</div>
       <div class="bt">A pass where every request returned <code>ConnectError</code> because no
       gateway was listening. Its 35,128 attacker "requests" are refused connections returning
       instantly, not load. It sits in <code>excluded_runs</code> with the reason rather than
@@ -501,38 +505,42 @@
   <div class="shead">
     <span class="num">04</span>
     <h2>Results and conclusions</h2>
-    <span class="tag">same load, same GPU, one config flag apart</span>
+    <span class="tag">flood profile &middot; same load, same GPU, one config flag apart</span>
   </div>
 
   <div class="body">
   <div class="cols" style="gap:9mm;">
     <div class="c40">
       <table>
-        <tr><th>Metric</th><th class="num" style="text-align:right">Off</th><th class="num" style="text-align:right">On</th></tr>
-        <tr class="key"><td>Legitimate p95</td><td class="num off">9.546 s</td><td class="num on">1.323 s</td></tr>
-        <tr class="key"><td>Legitimate p50</td><td class="num off">8.867 s</td><td class="num on">0.894 s</td></tr>
-        <tr class="key"><td>Legitimate answered</td><td class="num off">3</td><td class="num on">15</td></tr>
-        <tr><td>Legitimate rejected</td><td class="num">0</td><td class="num">0</td></tr>
-        <tr><td>Attacker admitted</td><td class="num">24</td><td class="num">8</td></tr>
-        <tr><td>Attacker rejection rate</td><td class="num">0%</td><td class="num">50%</td></tr>
-        <tr><td>Attacker p95</td><td class="num">10.355 s</td><td class="num">12.113 s</td></tr>
+        <tr><th>Legitimate users, attack window</th><th class="num" style="text-align:right">Off</th><th class="num" style="text-align:right">On</th></tr>
+        <tr class="key"><td>Success rate</td><td class="num off">100%</td><td class="num on">8.3%</td></tr>
+        <tr class="key"><td>Attempted / succeeded</td><td class="num off">33 / 33</td><td class="num on">96 / 8</td></tr>
+        <tr><td>Rejected, all <code>queue_timeout</code></td><td class="num">0</td><td class="num">88</td></tr>
+        <tr><td>p95 over successes</td><td class="num">2.986 s</td><td class="num">0.630 s</td></tr>
+        <tr class="key"><td>Peak backend queue</td><td class="num off">24</td><td class="num on">0</td></tr>
+        <tr><td>Attacker rejection rate</td><td class="num">0%</td><td class="num">88.9%</td></tr>
       </table>
-      <p class="mut" style="font-size:8.8pt; margin-top:4mm;">Capacity was <strong>reallocated</strong>,
-      not created. The attacker's own p95 rose while half its requests were refused: being an
-      expensive client became slower and less reliable, which is the incentive a cost-based
-      limiter should create.</p>
+      <p class="mut" style="font-size:8.8pt; margin-top:3.5mm;">Both required mechanisms fired.
+      The queue cap emptied the backend queue, and 88.9% of attacker traffic was refused. It was
+      still not a success: the cost-partitioned lane is what should have kept legitimate traffic
+      flowing, and one number stopped it.</p>
+      <figure style="margin-top:3.5mm;">
+        <img src="figures/dark/fig5_cost_threshold.png"
+             alt="Legitimate and attacker request cost, both below the cheap-lane threshold">
+      </figure>
     </div>
 
     <div class="c55">
       <figure>
-        <img src="figures/dark/fig1_legit_protection.png"
-             alt="Legitimate latency and throughput, mitigation off versus on">
+        <img src="figures/dark/fig4_flood_headline.png"
+             alt="Legitimate success rate, p95 and peak queue depth, mitigation off versus on">
       </figure>
-      <p class="mut" style="font-size:8.8pt; margin-top:3mm;">The two left panels are the result;
-      the right panel is what makes it credible. Latency fell <strong>and</strong> throughput rose
-      <strong>and</strong> nothing legitimate was rejected &mdash; three facts that cannot all hold if
-      the latency win came from shedding users. A gateway that rejects 95% of traffic has an
-      excellent p95, so we never quote one without the other.</p>
+      <p class="mut" style="font-size:8.8pt; margin-top:3mm;">The middle and right panels are what
+      a dashboard would show, and both say it worked: latency down 4.7&times;, queue gone. The left
+      panel is the one that matters. A gateway that refuses 92% of legitimate traffic has an
+      excellent p95 <em>because</em> it refused them &mdash; which is why every percentile here is
+      printed beside its success rate, and why we report this run and not the small
+      single-attacker probe that flattered us.</p>
     </div>
   </div>
   </div>
@@ -540,23 +548,23 @@
   <div class="takeaways">
     <div class="takeaway">
       <div class="t">Rate-limit the right quantity</div>
-      <div class="d">Eight requests, within any plausible RPS budget, took the endpoint from
-      sub-second to nine seconds. Charging tokens at admission fixed it.</div>
+      <div class="d">Cost, not requests. All 28 attackers stayed inside a per-client RPS budget
+      while holding the GPU.</div>
     </div>
     <div class="takeaway">
       <div class="t">Hold the queue where you can act on it</div>
-      <div class="d">Admitting more than <code>--max-num-seqs</code> does not remove the queue, only
-      moves it out of reach. This mattered more than any threshold we tuned.</div>
+      <div class="d">Capping admission at <code>--max-num-seqs</code> took the queue from 24 to 0.
+      This part worked, first time.</div>
     </div>
     <div class="takeaway">
-      <div class="t">Partition on cost, not identity</div>
-      <div class="d">Every identity-keyed defence dilutes under rotation. The mechanism that
-      survived is the one that never asks who is calling.</div>
+      <div class="t">A cost partition needs a measured threshold</div>
+      <div class="d">512 was right for one attack shape and inverted for the next. It belongs
+      between the two observed cost distributions.</div>
     </div>
     <div class="takeaway">
-      <div class="t">The measurement is as easy to get wrong</div>
-      <div class="d">Three of four design changes came from a test that proved nothing while
-      appearing to pass. Single attacker identity on the GPU remains the open gap.</div>
+      <div class="t">Measure availability, not latency</div>
+      <div class="d">Our own p95 said we had won. Only success rate caught it &mdash; the harness
+      is what we would reuse.</div>
     </div>
   </div>
 
