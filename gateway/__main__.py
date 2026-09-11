@@ -9,11 +9,30 @@ since the generator, the gateway and the backend all share one runtime.
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 
 import uvicorn
 
 from .app import create_app
 from .config import load_config
+
+
+def _check_writable(path: str) -> None:
+    """Fail with a readable message rather than a lifespan traceback.
+
+    An unwritable log directory otherwise surfaces as uvicorn's generic
+    "Application startup failed" with exit code 3, which is the same symptom
+    as a port clash and sends you looking in the wrong place.
+    """
+    try:
+        os.makedirs(path, exist_ok=True)
+        probe = os.path.join(path, ".write-probe")
+        with open(probe, "w") as handle:
+            handle.write("ok")
+        os.unlink(probe)
+    except OSError as exc:
+        sys.exit(f"cannot write to log directory {path!r}: {exc}")
 
 
 def main() -> None:
@@ -41,9 +60,14 @@ def main() -> None:
         },
     )
 
-    print(f"gateway mode={config.mode} upstream={config.upstream.base_url}")
-    print(f"listening on http://{config.host}:{config.port}")
-    print(f"writing {config.logging.dir}/{config.logging.run_id}/")
+    # Flushed before uvicorn starts. Redirected stdout is block-buffered, so
+    # without this the banner lands after uvicorn's startup error in the log
+    # file and reads as though the error came first.
+    print(f"gateway mode={config.mode} upstream={config.upstream.base_url}", flush=True)
+    print(f"listening on http://{config.host}:{config.port}", flush=True)
+    print(f"writing {config.logging.dir}/{config.logging.run_id}/", flush=True)
+
+    _check_writable(config.logging.dir)
 
     uvicorn.run(
         create_app(config),

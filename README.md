@@ -45,6 +45,13 @@ gw = subprocess.Popen([
 ], stdout=open("/content/gateway.log", "w"), stderr=subprocess.STDOUT)
 ```
 
+Always read `/content/gateway.log` when the process dies. Exit code 3 is
+uvicorn's startup failure and means one of two things: port 8080 is already
+held by an earlier gateway that was never killed, or `--log-dir` points
+somewhere unwritable. It does **not** mean vLLM is down — the gateway starts
+fine against a dead upstream and reports the problem per request instead, so
+check `curl -s -o /dev/null -w "%{http_code}" localhost:8000/health` separately.
+
 ## Two rules that protect the result
 
 **The gateway never reads the traffic label.** `X-Traffic-Label` is logged for
