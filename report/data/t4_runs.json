@@ -1,0 +1,85 @@
+{
+  "provenance": {
+    "source": "integration.ipynb",
+    "commit": "3a6690e",
+    "note": "Transcribed verbatim from the printed output of scripts/smoke_load.py. Every number below appears in a cell output in that notebook; nothing is interpolated or rounded up. Re-running the notebook regenerates them.",
+    "hardware": "NVIDIA Tesla T4, 16 GB, Google Colab",
+    "backend": "vLLM 0.29.0 serving Qwen/Qwen2.5-0.5B-Instruct",
+    "backend_flags": "--dtype half --max-model-len 2048 --gpu-memory-utilization 0.85 --max-num-seqs 8",
+    "load": "scripts/smoke_load.py --seconds 20 --attacker-concurrency 8 --attacker-max-tokens 512 --attacker-clients 1 --legit-interval 0.4"
+  },
+  "runs": [
+    {
+      "arm": "off",
+      "label_in_report": "mitigation off",
+      "config": "configs/off.yaml",
+      "run_id": "flood-off-8",
+      "notebook_cell": 20,
+      "execution_count": 53,
+      "legit": {
+        "requests": 3,
+        "success_rate": 1.0,
+        "rejection_rate": 0.0,
+        "p50_s": 8.867,
+        "p95_s": 9.546,
+        "max_s": 9.546,
+        "reasons": {},
+        "statuses": {"200": 3}
+      },
+      "attacker": {
+        "requests": 24,
+        "success_rate": 1.0,
+        "rejection_rate": 0.0,
+        "p50_s": 8.731,
+        "p95_s": 10.355,
+        "max_s": 10.355,
+        "reasons": {},
+        "statuses": {"200": 24}
+      }
+    },
+    {
+      "arm": "on",
+      "label_in_report": "mitigation on",
+      "config": "configs/ratelimit_queue.yaml",
+      "run_id": "flood-on-fresh",
+      "notebook_cell": 18,
+      "execution_count": 41,
+      "legit": {
+        "requests": 15,
+        "success_rate": 1.0,
+        "rejection_rate": 0.0,
+        "p50_s": 0.894,
+        "p95_s": 1.323,
+        "max_s": 1.323,
+        "reasons": {},
+        "statuses": {"200": 15}
+      },
+      "attacker": {
+        "requests": 16,
+        "success_rate": 0.5,
+        "rejection_rate": 0.5,
+        "p50_s": 11.63,
+        "p95_s": 12.113,
+        "max_s": 12.113,
+        "reasons": {"client_concurrency": 8},
+        "statuses": {"429": 8, "200": 8}
+      }
+    }
+  ],
+  "excluded_runs": [
+    {
+      "notebook_cell": 14,
+      "execution_count": 47,
+      "reason": "Every request returned ConnectError: no gateway was listening on the target port. 47 legit and 35128 attacker connection failures, the latter inflated because a refused connection returns instantly and the attacker loop has no backoff. Not a measurement of anything and excluded from the table."
+    }
+  ],
+  "backend_calibration": {
+    "note": "Measured on the T4 and used to calibrate gateway.fake_vllm so the experiment reproduces without a GPU.",
+    "decode_s_per_token": 0.035,
+    "batch_penalty_s_per_token_per_seq": 0.0026,
+    "prefill_s_per_token": 0.0002,
+    "derived_1024_token_generation_s": 35.8,
+    "kv_bytes_per_token": 12288,
+    "kv_bytes_per_token_derivation": "24 layers x 2 KV heads x 64 head_dim x 2 (K and V) x 2 bytes (fp16)"
+  }
+}

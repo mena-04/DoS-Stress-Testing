@@ -20,6 +20,8 @@ dependencies = [
 # Exact prompt token counts. Tokenizer only, no model weights, no GPU.
 tokenizer = ["transformers>=4.40"]
 dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+# Figures for the submission report. Not needed to run the gateway.
+report = ["matplotlib>=3.7"]
 
 [project.scripts]
 mitigation-gateway = "gateway.__main__:main"
