@@ -19,9 +19,18 @@ rate_limit:
   max_tokens_ceiling: 1024
 
 backpressure:
-  global_max_inflight: 48
-  queue_wait_ms: 200
+  # Keep this at or near the backend's --max-num-seqs. Setting it much higher
+  # moves the queue inside vLLM, where the gateway cannot reorder or shed it:
+  # a smoke run with 48 slots against a backend admitting 8 left pressure at
+  # zero throughout while legitimate p95 reached 4.0s.
+  global_max_inflight: 32
   upstream_max_num_seqs: 32
+  queue_wait_ms: 200
+  # Slots only cheap requests may use. This is what holds up when per-client
+  # limits dilute under identity rotation, because it partitions capacity by
+  # request cost rather than by client.
+  reserved_cheap_slots: 8
+  cheap_cost_threshold: 512
   upstream_waiting_high: 24.0
   upstream_waiting_low: 8.0
   occupancy_high: 0.9

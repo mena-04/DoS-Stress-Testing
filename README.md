@@ -16,6 +16,7 @@ Two required mechanisms, plus an optional third:
 |---|---|---|
 | Per-client dual token bucket (rate + token cost) | `429` | `rate_limit_requests`, `rate_limit_cost`, `client_concurrency`, `cost_exceeds_budget` |
 | Queue-pressure shedding with fair-share ranking | `503` | `queue_pressure`, `queue_timeout`, `global_capacity` |
+| Cost-partitioned admission with a reserved cheap lane | `503` | `queue_timeout` |
 | VAE anomaly-adaptive tightening (optional) | `429` | `anomaly_shed` |
 
 ## Quick start
@@ -136,8 +137,12 @@ Three consequences:
 
 1. **Pin `--max-num-seqs`** (16–32) when launching vLLM and record it. This
    gives the backend a documented admission width and makes queue depth a
-   number that actually moves. Set `backpressure.upstream_max_num_seqs` to
-   the same value.
+   number that actually moves. Set both `upstream_max_num_seqs` and
+   `global_max_inflight` to that value. Setting `global_max_inflight` much
+   higher is worse than useless: a smoke run with 48 gateway slots against a
+   backend admitting 8 held pressure at level 0 for the whole run, because
+   the queue formed inside vLLM where the gateway can neither see it in time
+   nor reorder it, and legitimate p95 reached 4.0 s with nothing rejected.
 2. **Disable prefix caching** for headline runs and randomise a prompt prefix
    per request. vLLM enables prefix caching by default, so 100 identical
    prompts mean one prefill and 99 cache hits — the "expensive" prompt is not
@@ -187,12 +192,37 @@ not beat a well-tuned cost limiter at detection. Its value is that it needs
 only normal traffic to train and flags shapes nobody hand-coded. Present it
 as adaptive tightening with an ablation, not as the primary defense.
 
+## Identity rotation and the reserved lane
+
+Every per-client mechanism dilutes under identity rotation. With eight
+attacker IDs, each one presents a 0.125 cost share against a 0.111 equal
+share, so it looks almost fair: the token buckets see eight modest clients
+and fair-share ranking finds nobody above threshold. A smoke run reproduced
+exactly this — zero rejections, and legitimate p95 at 4.0 s.
+
+The mechanism that holds up is `gateway/slots.py`, which partitions admission
+capacity by *request cost* instead of by identity. Expensive requests may
+only use the general pool; cheap requests try the general pool first and fall
+back to a small reserved pool. Low-cost traffic therefore always has
+somewhere to go, however many identities the expensive traffic arrives under,
+and rotating IDs buys an attacker nothing against it.
+
+A plain semaphore would not do this. It is FIFO, so a cheap request arriving
+behind a wall of expensive ones waits for an expensive one to finish.
+
+Calibration matters here: `cheap_cost_threshold` has to sit above the
+legitimate profile's typical `prompt_tokens + max_tokens` and below the
+attacker's. Set it from the cost distribution of a baseline run. If it is too
+high the reserved lane admits the attack; too low and legitimate requests
+never reach it.
+
 ## Known limitations
 
-- **Identity rotation.** Per-client limits and cost shares are keyed on the
-  observed client ID. An attacker cycling IDs dilutes its own share below the
-  threshold, and only `global_max_inflight` constrains it. Mitigating this
-  properly needs a secondary identity key and a new-client penalty budget.
+- **Identity rotation still defeats the per-client limits** themselves, as
+  above. The reserved lane keeps cheap traffic flowing, but an attacker whose
+  requests are individually cheap and numerous, spread across many IDs, is
+  constrained only by `global_max_inflight`. Handling that properly needs a
+  secondary identity key and a new-client penalty budget.
 - **Cost is estimated before generation.** `max_tokens` is charged in full
   even when the model stops early, so the limiter over-charges short replies.
   This is deliberate: charging actual usage would let a client spend budget it

@@ -17,9 +17,12 @@ rate_limit:
   max_tokens_ceiling: 1024
 
 backpressure:
-  global_max_inflight: 48
-  queue_wait_ms: 200
+  # At or near the backend's --max-num-seqs; see configs/ratelimit_queue.yaml.
+  global_max_inflight: 32
   upstream_max_num_seqs: 32
+  queue_wait_ms: 200
+  reserved_cheap_slots: 8
+  cheap_cost_threshold: 512
 
 fairshare:
   share_multiplier: 1.25
