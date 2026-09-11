@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Build the submission PDFs.
+# Build the submission PDF.
 #
-#   bash report/build.sh            # slides.pdf and report.pdf
-#   bash report/build.sh slides     # just the deck
+#   bash report/build.sh            # slides.pdf
 #
-# slides.pdf is the submission: five 16:9 slides. report.pdf is the same
-# material as a long-form A4 document, kept as backing detail.
+# slides.pdf is the submission: five 16:9 slides. There is deliberately only
+# one document, so there is nothing that can disagree with it.
 #
 # Headless Chrome rather than a LaTeX toolchain: it is already present
 # wherever a browser is, and it honours the @page rules that the page limit
@@ -14,7 +13,7 @@ set -uo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-targets=("${@:-slides report}")
+targets=("${@:-slides}")
 # Unquoted on purpose: the default above is one word-splittable string.
 # shellcheck disable=SC2206
 targets=(${targets[@]})

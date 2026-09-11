@@ -8,15 +8,34 @@ to submit it — download that file. The rest of this page is only for
 regenerating it after an edit.
 
 ```bash
-bash report/build.sh            # slides.pdf and report.pdf, with the limit check
-bash report/build.sh slides     # just the deck
+pip install -e ".[report]"      # matplotlib; not needed to run the gateway
+bash report/build.sh            # regenerates figures, prints slides.pdf, checks limits
 ```
 
-`build.sh` fails rather than warns if either output exceeds 5 pages or 20 MiB,
-so a paragraph added to a slide cannot quietly push the submission over.
+`build.sh` fails rather than warns if the output exceeds 5 pages or 20 MiB, so
+a paragraph added to a slide cannot quietly push the submission over.
 
-`report.pdf` is the same material as a long-form A4 document. It is not the
-submission; it is kept because it has room for detail the slides cannot hold.
+There is deliberately only one document. An earlier long-form A4 `report.pdf`
+was removed: it duplicated the deck's material and its results section still
+described the single-attacker smoke run as the headline, which the repository
+README correctly flagged as contradicting the primary Locust result. Keeping
+one artifact means there is nothing that can disagree with itself. It is in
+git history if it is ever wanted back.
+
+## What the deck reports
+
+The primary result is the paired Locust `flood` run
+`demo-20260911-180828-5190b1`, transcribed into `data/locust_flood.json` from
+the raw per-request logs in `results/demo_evidence.zip` — not from console
+output. It is not a flattering result: the queue cap bounded the backend queue
+to zero and the gateway still refused 92% of legitimate requests, because
+`cheap_cost_threshold` was 512 while legitimate requests cost 48–49 and
+attacker requests cost 320–322, so both classes counted as cheap and the
+reserved lane partitioned nothing.
+
+The earlier single-attacker smoke run is in `data/t4_runs.json` and is
+referenced as a small-sample secondary, never mixed with the flood numbers.
+It has 3 legitimate requests in one arm and 15 in the other.
 
 ## Fonts
 
@@ -49,6 +68,8 @@ instead:
 !bash report/build.sh
 ```
 
+Colab already has matplotlib, so `.[report]` is not needed there.
+
 Chrome commonly lingers for a minute or two after writing the file, which is
 why `build.sh` caps it with `timeout` and judges the result by the PDF on disk
 rather than by the exit status.
@@ -65,30 +86,21 @@ engine `build.sh` drives. Turn off headers and footers and set margins to
 | File | Purpose |
 |---|---|
 | `slides.html` | The deck. `@page size: 338.667mm 190.5mm` is 13.333in x 7.5in, the standard 16:9 slide. One `<section class="slide">` per slide. |
-| `report.html` | The same material as an A4 document, for detail that does not fit on a slide. |
-| `data/t4_runs.json` | Every measured number either document quotes, with the notebook commit and cell each came from. |
-| `make_figures.py` | Generates the three figures, in a light theme for the report and a dark theme for the deck. No number is introduced here. |
+| `data/locust_flood.json` | The primary result: the paired Locust flood run, with its provenance, the cost distributions that explain it, and the config in effect. |
+| `data/t4_runs.json` | The earlier single-attacker smoke run, with the notebook cell each number came from, plus the backend calibration. |
+| `make_figures.py` | Generates the figures, in a light theme and a dark theme, from those two files. No number is introduced here. |
 | `build.sh` | Figures, then HTML to PDF via headless Chrome, then the limit check. |
 | `figures/`, `figures/dark/` | Generated output; regenerate rather than edit. |
 
-## Where the numbers come from
-
-`data/t4_runs.json` is transcribed from the printed output of
-`scripts/smoke_load.py` in `integration.ipynb` at commit `3a6690e`, where the
-two arms were run against live vLLM on a Tesla T4. Each run records its
-notebook cell and execution count so any figure can be traced back to the cell
-that produced it.
-
-One run is listed under `excluded_runs` rather than deleted: a pass in which
-every request returned `ConnectError` because no gateway was listening on the
-target port. Its 35,128 attacker "requests" are refused connections returning
-instantly, not load. Keeping the exclusion visible is the point.
+Figures 4 and 5 come from the flood data and are the ones the deck uses.
+Figures 1 to 3 come from the smoke data and are kept because they are what the
+earlier arm measured.
 
 ## Editing
 
-Changing a measured value means changing `data/t4_runs.json` and re-running
-`build.sh`, not editing a figure or a table cell. The results table is written
-out in full for typesetting reasons, so if you change the data file, check the
-table against it.
+Changing a measured value means changing the data file and re-running
+`build.sh`, not editing a figure or a table cell. The results table on slide 5
+is written out in full for typesetting reasons, so if you change
+`data/locust_flood.json`, check the table against it.
 
 Team and member names are on the title slide, in the `.byline` block.
