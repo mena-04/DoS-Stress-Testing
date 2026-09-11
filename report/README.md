@@ -40,5 +40,4 @@ Changing a measured value means changing `data/t4_runs.json` and re-running
 written out in full for typesetting reasons, so if you change the data file,
 check the table against it.
 
-To fill in the team details, replace the three `<span class="fill">` blocks on
-the title page. They are highlighted in the PDF so they cannot be missed.
+Team and member names are in the `.meta` block on the title page.
