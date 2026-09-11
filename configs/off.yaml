@@ -1,0 +1,13 @@
+# Mitigation-off baseline.
+#
+# Still traverses the gateway, and still writes gateway.jsonl. The "before"
+# run has to pay the same proxy hop as the "after" run, otherwise the latency
+# delta measures the extra network hop instead of the mitigation.
+mode: "off"  # quoted: YAML 1.1 parses a bare off as the boolean false
+
+upstream:
+  base_url: http://127.0.0.1:8000
+
+logging:
+  run_id: baseline
+  log_features: true  # normal-traffic runs supply the VAE's training data

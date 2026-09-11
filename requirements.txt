@@ -1,0 +1,15 @@
+fastapi>=0.110
+uvicorn[standard]>=0.27
+httpx>=0.27
+pyyaml>=6.0
+prometheus-client>=0.20
+numpy>=1.24
+
+# Optional: exact prompt token counts via the model's own tokenizer.
+# Tokenizer files only, no weights and no GPU. The gateway falls back to a
+# chars/4 heuristic when this is absent.
+# transformers>=4.40
+
+# Tests
+pytest>=8.0
+pytest-asyncio>=0.23
