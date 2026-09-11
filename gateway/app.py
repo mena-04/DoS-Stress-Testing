@@ -57,16 +57,17 @@ def create_app(
         await state.log.start_flusher()
         await state.upstream.start()
 
-        poller = None
-        if config.backpressure.enabled:
-            poller = UpstreamMetricsPoller(
-                config.upstream.base_url,
-                config.backpressure,
-                # Under test the upstream is an in-process ASGI app, so the
-                # poller has to reuse that transport rather than open a socket.
-                client=state.upstream.client if upstream_transport is not None else None,
-            )
-            await poller.start()
+        # Polled in every mode, including off. The mitigation-off baseline
+        # needs its own queue-depth series or there is nothing to compare the
+        # mitigated run's chart against. Only the admission path consults it.
+        poller = UpstreamMetricsPoller(
+            config.upstream.base_url,
+            config.backpressure,
+            # Under test the upstream is an in-process ASGI app, so the
+            # poller has to reuse that transport rather than open a socket.
+            client=state.upstream.client if upstream_transport is not None else None,
+        )
+        await poller.start()
         state.poller = poller
         state.pressure = PressureController(config.backpressure, poller)
         state.scorer = build_scorer(config.anomaly, state.features)
@@ -92,8 +93,7 @@ def create_app(
         finally:
             await state.sampler.stop()
             await state.scorer.stop()
-            if state.poller is not None:
-                await state.poller.stop()
+            await state.poller.stop()
             await state.upstream.stop()
             await state.log.stop()
 
@@ -121,9 +121,8 @@ def create_app(
         state.metrics.inflight.set(state.controller.inflight)
         state.metrics.pressure_level.set(int(state.pressure.level))
         state.metrics.active_clients.set(state.controller.limiters.active_count())
-        if state.poller is not None:
-            stale = state.poller.age_ms() > config.backpressure.metrics_stale_after_ms
-            state.metrics.upstream_stale.set(1 if stale else 0)
+        stale = state.poller.age_ms() > config.backpressure.metrics_stale_after_ms
+        state.metrics.upstream_stale.set(1 if stale else 0)
         return Response(
             content=state.metrics.render(), media_type="text/plain; version=0.0.4"
         )

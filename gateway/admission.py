@@ -120,15 +120,15 @@ class AdmissionController:
                     decision, verdict.reason or "rate_limit_requests", verdict.retry_after_s
                 )
 
-        if config.backpressure.enabled:
-            report = self.pressure.evaluate()
-            decision.pressure_level = int(report.level)
-            decision.pressure_triggers = report.triggers
-            decision.upstream_stale = report.upstream_stale
-            decision.upstream_running = report.snapshot.running
-            decision.upstream_waiting = report.snapshot.waiting
-            decision.signals = report.signals
+        report = self.pressure.evaluate()
+        decision.pressure_level = int(report.level)
+        decision.pressure_triggers = report.triggers
+        decision.upstream_stale = report.upstream_stale
+        decision.upstream_running = report.snapshot.running
+        decision.upstream_waiting = report.snapshot.waiting
+        decision.signals = report.signals
 
+        if config.backpressure.enabled:
             if report.level >= PressureLevel.ELEVATED:
                 share = self.fairshare.evaluate(client_id)
                 decision.cost_share = share.share
