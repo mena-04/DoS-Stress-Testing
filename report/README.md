@@ -3,12 +3,39 @@
 Five pages, PDF, matching the required section order: title, project objective,
 proposed solution, solution validation, results and conclusions.
 
+**The built PDF is committed at `report/report.pdf`.** Nothing needs to be run
+to submit it — download that file. The rest of this section is only for
+regenerating it after an edit.
+
 ```bash
 bash report/build.sh     # regenerates figures, prints report.pdf, checks the limits
 ```
 
 `build.sh` fails rather than warns if the output exceeds 5 pages or 20 MiB, so a
 paragraph added to `report.html` cannot quietly push the submission over.
+
+### Rebuilding in Colab
+
+Colab has matplotlib but no browser, and `apt install chromium-browser` there
+resolves to a snap stub that cannot run. Install Chrome from Google's `.deb`
+instead:
+
+```python
+!wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+!apt-get install -y -q ./google-chrome-stable_current_amd64.deb
+!bash report/build.sh
+```
+
+Chrome commonly lingers for a minute or two after writing the file, which is
+why `build.sh` caps it with `timeout` and judges the result by the PDF on disk
+rather than by the exit status.
+
+### Rebuilding without a command line
+
+`report.html` is self-contained apart from `figures/`, so opening it in any
+browser and printing to PDF gives the same output — it is the same rendering
+engine `build.sh` drives. Choose A4, margins "Default", and turn off headers
+and footers, or the page count grows past five.
 
 ## Files
 
