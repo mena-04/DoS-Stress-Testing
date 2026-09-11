@@ -39,6 +39,13 @@ class RequestEvent:
     prompt_hash: int
     latency_ms: float = 0.0
     failed: bool = False
+    client_id: str = ""
+    open: bool = False
+    expired: bool = False
+
+    @property
+    def cost(self) -> float:
+        return float(self.prompt_tokens + self.max_tokens)
 
 
 @dataclass
@@ -47,6 +54,9 @@ class ClientWindow:
     events: deque[RequestEvent] = field(default_factory=lambda: deque(maxlen=512))
     concurrency: int = 0
     last_seen: float = 0.0
+    # Cost of requests admitted before the window opened that are still
+    # running. Tracked separately because they have left ``events``.
+    expired_open_cost: float = 0.0
 
     def add(self, event: RequestEvent) -> None:
         self.events.append(event)
@@ -54,7 +64,24 @@ class ClientWindow:
 
     def trim(self, cutoff: float) -> None:
         while self.events and self.events[0].ts < cutoff:
-            self.events.popleft()
+            event = self.events.popleft()
+            if event.open:
+                event.expired = True
+                self.expired_open_cost += event.cost
+        if self.concurrency <= 0:
+            # Nothing is running, so no expired request can still be holding
+            # a slot. Also self-heals if a completion was never recorded,
+            # which would otherwise charge the client forever.
+            self.expired_open_cost = 0.0
+
+    def recent_cost(self) -> float:
+        """Cost attributable to this client right now.
+
+        A generation longer than the window would otherwise age out of
+        ``events`` while still occupying a slot, dropping the client to zero
+        recent cost. Requests that are still running keep being charged.
+        """
+        return sum(e.cost for e in self.events) + self.expired_open_cost
 
 
 class FeatureStore:
@@ -74,13 +101,24 @@ class FeatureStore:
         self, client_id: str, prompt_tokens: int, max_tokens: int, prompt_hash: int
     ) -> RequestEvent:
         now = self._clock()
-        event = RequestEvent(now, prompt_tokens, max_tokens, prompt_hash)
+        event = RequestEvent(
+            now, prompt_tokens, max_tokens, prompt_hash, client_id=client_id, open=True
+        )
         self.window(client_id).add(event)
         return event
 
     def complete(self, event: RequestEvent, latency_ms: float, failed: bool) -> None:
         event.latency_ms = latency_ms
         event.failed = failed
+        if not event.open:
+            return
+        event.open = False
+        if event.expired:
+            entry = self._windows.get(event.client_id)
+            if entry is not None:
+                entry.expired_open_cost = max(
+                    0.0, entry.expired_open_cost - event.cost
+                )
 
     def evict(self, ttl_s: float) -> None:
         now = self._clock()
@@ -113,7 +151,7 @@ class FeatureStore:
         total = 0.0
         for key, entry in self._windows.items():
             entry.trim(cutoff)
-            cost = float(sum(e.prompt_tokens + e.max_tokens for e in entry.events))
+            cost = entry.recent_cost()
             if cost <= 0 and entry.concurrency == 0:
                 continue
             costs[key] = cost

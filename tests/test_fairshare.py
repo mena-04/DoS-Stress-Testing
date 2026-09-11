@@ -59,6 +59,40 @@ def test_shares_decay_out_of_the_window():
     assert controller.evaluate("attacker").over_share is False
 
 
+def test_long_running_requests_keep_being_charged():
+    """A generation slower than the window must not become invisible.
+
+    Cost is recorded at admission. Once it ages out of the window the client
+    reads as idle even though it is still holding slots, and the steady cheap
+    client is then measured as consuming the whole window and gets shed --
+    which is precisely backwards. This is the low-and-slow profile.
+    """
+    clock = [0.0]
+    store = _store(clock)
+    controller = FairShareController(FairShareConfig(), store)
+
+    running = []
+    for i in range(8):
+        store.window("attacker").concurrency += 1
+        running.append(store.record_admitted("attacker", 1000, 1024, prompt_hash=i))
+
+    # Past the 10s window, with every attacker request still in flight.
+    clock[0] = 11.0
+    store.record_admitted("legit", 11, 32, prompt_hash=99)
+
+    assert controller.evaluate("attacker").over_share is True
+    assert controller.evaluate("legit").over_share is False
+
+    # The charge is released on completion, not held as a lasting penalty.
+    clock[0] = 40.0
+    for event in running:
+        store.complete(event, latency_ms=36_000.0, failed=False)
+        store.window("attacker").concurrency -= 1
+    store.record_admitted("legit", 11, 32, prompt_hash=100)
+    assert controller.evaluate("attacker").over_share is False
+    assert store.window("attacker").expired_open_cost == 0.0
+
+
 def test_disabled_controller_never_sheds():
     clock = [0.0]
     store = _store(clock)
