@@ -1,248 +1,330 @@
 # DoS Stress-Testing & Auto-Mitigation for AI Inference Servers
 
-Mitigation gateway that sits between the load generator and a vLLM server
-running `Qwen/Qwen2.5-0.5B-Instruct`.
+An end-to-end experimental testbed for **application-layer overload of an AI inference service**. The project combines a real vLLM/Qwen backend, four Locust traffic profiles, an admission-control gateway, request and server telemetry, reproducible charts, and a submission report.
 
+The evaluation question is not simply whether the gateway rejects traffic. It is **whether legitimate users still receive successful, low-latency inference responses while competing with abusive traffic**.
+
+**Start here:** [Demo notebook](final_demo.ipynb) | [Traffic profiles](loadgen/locustfile.py) | [Recorded results](results/) | [Report](report/report.pdf) | [Report sources](report/)
+
+> **Evidence status:** the repository contains an encouraging small-sample smoke test and a newer, more demanding Locust flood comparison. The newer run bounded the backend queue but rejected most legitimate requests. These are different experiments, not interchangeable results. See [Recorded results](#recorded-results) and [Known issues](#known-issues-and-pending-fixes).
+
+## Architecture
+
+```text
+Locust load generator
+  |-- legitimate clients
+  `-- attack clients: spike / flood / low-and-slow
+          |
+          v
+Admission gateway, same hop in OFF and ON runs
+  |-- per-client request-rate and token-cost budgets
+  |-- per-client concurrency limit
+  |-- global in-flight slots and bounded admission wait
+  |-- cost-based reserved slots and pressure/fair-share checks
+  `-- optional VAE-based adaptive tightening
+          |
+          v
+Real vLLM inference server -> Qwen/Qwen2.5-0.5B-Instruct -> GPU
+          |
+          v
+Client JSONL + gateway decisions + sampled backend state
+          |
+          v
+CSV summaries, PNG charts, evidence ZIP, report
 ```
-load generator  ->  mitigation gateway (:8080)  ->  vLLM (:8000)
-                          |                              |
-                    gateway.jsonl                  vllm.log / metrics
-                    gateway_samples.jsonl
-```
 
-Two required mechanisms, plus an optional third:
+The recorded GPU experiments use a **single Colab Tesla T4, one vLLM instance, and an eight-sequence scheduler limit**. There is no autoscaling. This is a deliberately capacity-constrained testbed, not a claim about the GPU's maximum achievable throughput.
 
-| Mechanism | Rejects with | Reason codes |
+The final notebook uses backend `127.0.0.1:8000` and gateway `127.0.0.1:8090`. The gateway CLI defaults to port `8080`; older debugging runs used other ports. Actual addresses are recorded in each run's metadata. Port changes are deployment details, not mitigation mechanisms.
+
+## Mapping to the competition requirements
+
+| Requirement | Implementation | Evidence and qualification |
 |---|---|---|
-| Per-client dual token bucket (rate + token cost) | `429` | `rate_limit_requests`, `rate_limit_cost`, `client_concurrency`, `cost_exceeds_budget` |
-| Queue-pressure shedding with fair-share ranking | `503` | `queue_pressure`, `queue_timeout`, `global_capacity` |
-| Cost-partitioned admission with a reserved cheap lane | `503` | `queue_timeout` |
-| VAE anomaly-adaptive tightening (optional) | `429` | `anomaly_shed` |
+| Real inference service with realistic per-request cost | vLLM serving Qwen; prompt length and requested output length vary | Original notebooks and saved real-backend metadata; the CPU stand-in is for tests only |
+| Metrics endpoint: latency, queue depth, success | vLLM `/metrics`, gateway `/metrics`, client outcomes | Raw request logs and `gateway_samples.jsonl`; success is assessed at the client, not inferred from queue size |
+| Normal, spike, sustained flood, low-and-slow traffic | Four profiles in `loadgen/locustfile.py` | All four are implemented; the bundled newer paired raw runs cover **flood**, not the entire eight-condition matrix |
+| At least two mitigation mechanisms | Per-client budgets plus bounded global admission/fast rejection | `gateway/ratelimit.py`, `gateway/admission.py`, `gateway/slots.py` and mode configs |
+| Before/after p50, p95, errors, legitimate-user availability | Notebook B6 joins attempts to outcomes and compares OFF/ON | `results/live_before_after.csv`; the newer ON run does **not** meet the legitimate-availability objective |
+| Charts generated from actual runs | Notebook analysis and queue plotting; report figure generator | PNGs, underlying CSV/JSONL, and provenance retained; historical console transcriptions are distinguished from raw-log recomputation |
 
-The submission report is in [`report/`](report/) — `bash report/build.sh`
-regenerates its figures and PDF from the recorded run data.
+## Repository guide
 
-## Quick start
-
-```bash
-pip install -e ".[dev]"
-
-# No GPU needed: a calibrated vLLM stand-in
-python -m gateway.fake_vllm --port 8000 --max-num-seqs 16
-
-python -m gateway --config configs/ratelimit_queue.yaml --run-id demo-01
-curl -s localhost:8080/gateway/state | python -m json.tool
+```text
+final_demo.ipynb          Main demonstration, live runner, analysis and export
+integration.ipynb         Original integration/debugging and smoke-test record
+testing.ipynb             Original backend/concurrency probe
+loadgen/locustfile.py     Four Locust profiles and per-request client logs
+demo/runtime.py          Supporting process and experiment helper code
+demo/queue_chart.py      Queue-chart function, using real sampled state
+gateway/                 Admission, limiting, proxying, telemetry and VAE code
+configs/                 OFF, rate-limit, combined, and optional VAE configs
+scripts/smoke_load.py     Short gateway integration probe, not all four profiles
+scripts/queue_depth_chart.py  Standalone plot launcher for the older run IDs
+tests/                   CPU unit/integration tests against a stand-in
+results/                 Historical and newer results, PNGs and evidence archive
+report/                  HTML/PDF report, source data and figure/build scripts
 ```
 
-In Colab, launch it the same way vLLM is launched:
+The notebook contains its own copies of the runtime/plotting helpers; B4 writes the Locust file. Editing a supporting `.py` copy alone does not change the corresponding notebook cell. Keep those copies aligned when changing the demo.
+
+## View the existing evidence without a GPU
+
+Open the CSVs and PNGs in [`results/`](results/), or open [`final_demo.ipynb`](final_demo.ipynb) in Colab with `RUN_LIVE_DEMO = False`.
+
+A1 locates/clones the project, A2 displays the historical smoke comparison, and A3 defines the queue-plot function. **A4 defaults to the older `flood-off-8` and `flood-on-fresh` run folders.** Those historical raw folders are not included in the evidence archive. The newer raw flood pair is included, under different run IDs.
+
+To regenerate the **newer** queue chart, run the following from the repository root after installing `pandas` and `matplotlib`. Extraction goes into a separate folder so existing run directories and saved results are not overwritten:
 
 ```python
-gw = subprocess.Popen([
-    "python", "-m", "gateway",
-    "--config", "configs/ratelimit_queue.yaml",
-    "--upstream", "http://127.0.0.1:8000",
-    "--port", "8080",
-    "--run-id", RUN_ID,
-], stdout=open("/content/gateway.log", "w"), stderr=subprocess.STDOUT)
+from pathlib import Path
+from zipfile import ZipFile
+import json
+from demo.queue_chart import plot_queue_depth
+
+root = Path.cwd()
+recovered = root / "recovered_evidence"
+with ZipFile(root / "results/demo_evidence.zip") as archive:
+    for member in archive.infolist():
+        target = (recovered / member.filename).resolve()
+        if not target.is_relative_to(recovered.resolve()):
+            raise ValueError("Unsafe archive path")
+    archive.extractall(recovered)
+
+saved = json.loads((root / "results/latest_demo_runs.json").read_text())["flood"]
+paths = {
+    mode: recovered / "runs" / Path(old_path).name / "gateway_samples.jsonl"
+    for mode, old_path in saved.items()
+}
+plot_queue_depth(paths, root / "results/recomputed")
 ```
 
-## Two rules that protect the result
+Missing or stale backend readings are not treated as zero. Queue plots require actual samples; a maximum queue value alone cannot reconstruct a time series.
 
-**The gateway never reads the traffic label.** `X-Traffic-Label` is logged for
-the analysis join and is invisible to admission control. Branching on ground
-truth would make "attacker rejection rate" a measurement of the label rather
-than of the defense.
+## Run the live Colab demo
 
-**Mitigation-off still goes through the gateway.** `configs/off.yaml` is a
-pure passthrough that still writes `gateway.jsonl`. If the baseline run
-bypassed the gateway, every latency delta would include the proxy hop — which
-is not free when the generator, the gateway and vLLM's frontend share two
-vCPUs on a Colab box.
+Open [the notebook in Colab](https://colab.research.google.com/github/mena-04/DoS-Stress-Testing/blob/main/final_demo.ipynb). Live replay needs a suitable GPU runtime; viewing saved results does not.
 
-## Mitigation profiles
+In A1 select:
 
-The four configs are the ablation, selectable with one flag:
+```python
+RUN_LIVE_DEMO = True
+PROFILES = ["flood"]
+# To run the complete profile/mode matrix instead:
+# PROFILES = ["normal", "spike", "flood", "low_slow"]
+```
 
-| Config | Rate limit | Queue cap | Fair share | VAE |
-|---|---|---|---|---|
-| `configs/off.yaml` | — | — | — | — |
-| `configs/ratelimit.yaml` | yes | — | — | — |
-| `configs/ratelimit_queue.yaml` | yes | yes | yes | — |
-| `configs/full.yaml` | yes | yes | yes | yes |
+Run A1-A3, then B1-B7 in order, followed by C. A4 is optional and is only for old raw logs. B1 installs live-run dependencies when enabled, B3 starts or verifies **real vLLM**, B5 runs the selected OFF/ON pairs, B6 summarizes client outcomes, B7 plots the selected pair's queue, and C packages the evidence.
 
-## For the load generator (Person 1)
+The notebook uses the installation/version recorded in the earlier successful environment, checks process readiness and forwarding, uses unique run IDs, and stops each managed gateway before the next mode. It does not start a fake backend as a substitute for a live GPU experiment.
 
-Point `--target` at `http://127.0.0.1:8080`. Nothing else has to change: when
-`X-Client-ID` is absent the gateway falls back to the peer address, so an
-unmodified client works. Three headers make the evidence much stronger:
+**Before treating a rerun as a validation:** review the open issues below. Notebook execution alone does not mean the mitigation preserved legitimate service.
 
-| Header | Purpose |
-|---|---|
-| `X-Client-ID` | the per-client identity every limit is keyed on |
-| `X-Request-ID` | join key; echoed on every response and logged |
-| `X-Traffic-Label` | `legit` / `attacker`, logged only |
+### Local setup and individual components
 
-Please also:
-
-- **always set `max_tokens` explicitly.** An omitted value is charged
-  `default_max_tokens`, because a request that generates to the context limit
-  is not cheap and must not be charged zero.
-- **never retry a `429` or `503`.** A retrying client turns rejections into
-  amplification and makes the rejection rate meaningless.
-- **record the real status code.** Collapsing everything to `"error"` erases
-  the difference between a timeout, a `429` and a `503`.
-
-## For the analysis side (Person 2)
-
-Each run writes `runs/<run_id>/`:
-
-- `gateway_config.json` — the full resolved config, so a run is reproducible
-- `gateway.jsonl` — one record per request
-- `gateway_samples.jsonl` — gateway and upstream state every 250 ms
-
-Fields in `gateway.jsonl` that map onto the required metrics:
-
-| Field | Use |
-|---|---|
-| `request_id` | join to the load generator's own log |
-| `client_id`, `traffic_label` | split legitimate from attacker |
-| `decision`, `reason`, `http_status` | success / error / rejection rates |
-| `gateway_latency_ms`, `queue_wait_ms` | p50 / p95, and how much is queueing |
-| `prompt_tokens_est`, `max_tokens`, `cost` | requests/sec versus cost/sec |
-| `upstream_waiting`, `upstream_running` | queue depth over time |
-| `upstream_stale` | whether that queue reading is trustworthy |
-| `pressure_level`, `pressure_triggers` | which signal caused shedding |
-| `cost_share`, `share_threshold` | why a specific client was shed |
-| `tier`, `anomaly_score` | VAE score over time |
-
-`upstream_stale` matters. In the first real overload run, vLLM's `/metrics`
-stopped responding under load and the sampler silently dropped every sample,
-so 180 consecutive samples recorded `num_requests_running = 0` while 100
-requests were in flight. Any queue-depth chart needs to distinguish "the
-queue was empty" from "we could not see the queue".
-
-`/metrics` on the gateway exposes the same counters in Prometheus format
-(`gateway_requests_total`, `gateway_rejections_total{reason}`,
-`gateway_queue_wait_seconds`, `gateway_pressure_level`, and so on) on a
-private registry that does not shadow vLLM's `vllm:*` series.
-
-## Calibration: the thresholds are placeholders
-
-Every number in the configs is a guess until the backend's capacity is
-measured. The first real run on a T4 showed why this cannot be skipped: 100
-concurrent expensive requests produced p50 5.603 s, p95 5.700 s, max 5.701 s
-with 100/100 succeeding, and no queue ever formed. A 100x concurrency
-increase cost about 23% more per-token latency, so the server was far from
-its knee, and `num_requests_waiting` stayed at 0 because a 0.5B model with
-~11 GB of KV cache admits every request into one batch.
-
-Three consequences:
-
-1. **Pin `--max-num-seqs`** (16–32) when launching vLLM and record it. This
-   gives the backend a documented admission width and makes queue depth a
-   number that actually moves. Set both `upstream_max_num_seqs` and
-   `global_max_inflight` to that value. Setting `global_max_inflight` much
-   higher is worse than useless: a smoke run with 48 gateway slots against a
-   backend admitting 8 held pressure at level 0 for the whole run, because
-   the queue formed inside vLLM where the gateway can neither see it in time
-   nor reorder it, and legitimate p95 reached 4.0 s with nothing rejected.
-2. **Disable prefix caching** for headline runs and randomise a prompt prefix
-   per request. vLLM enables prefix caching by default, so 100 identical
-   prompts mean one prefill and 99 cache hits — the "expensive" prompt is not
-   expensive.
-3. **Sweep concurrency** (1, 2, 4, 8, 16, 32, 64, 128) and find the knee of
-   the p95 curve. That single measurement sets `global_max_inflight`, the
-   shedding water marks, and the per-client cost budget.
-
-Because batching is so efficient, the scarce resource is sequence-slot
-occupancy rather than request rate. This is why the cost bucket and the
-per-client in-flight cap do the real work: a client issuing
-`max_num_seqs` requests at `max_tokens=1024` locks the server for tens of
-seconds at a negligible request rate, which no request-rate limit can see.
-
-## VAE anomaly detection (optional layer)
-
-Trained on normal traffic only, so reconstruction error is a novelty signal
-rather than a learned attack signature.
+From the repository root:
 
 ```bash
-# 1. baseline run with feature logging on
-python -m gateway --config configs/off.yaml --run-id normal-1 --log-features
-
-# 2. train, and read the printed holdout percentiles
-python -m gateway.anomaly.train runs/normal-1/gateway.jsonl -o models/vae.npz
-
-# 3. set suspect/hostile thresholds above the baseline p99, then
-python -m gateway --config configs/full.yaml --run-id mitigated-vae
+python -m pip install -e ".[dev,report]" locust pandas requests
 ```
 
-Design notes:
+This installs the gateway/test/report dependencies and the separately required load/analysis tools. It does **not** install vLLM or a model. Use the notebook's recorded GPU setup or an already working, compatible vLLM environment.
 
-- 12 rolling per-client features (`gateway/features.py`), whose order is the
-  model's ABI — a model trained on a different layout is rejected at load.
-- Scoring runs in a background task every 200 ms and is cached per client.
-  The request path only reads a dict entry, because a mitigation layer that
-  adds tail latency under load defeats its own purpose.
-- The forward pass is numpy and the latent mean is used instead of a sample,
-  so an identical client scores identically on consecutive ticks.
-- Tiers (`normal` / `suspect` / `hostile`) scale the client's bucket rates and
-  decay over `tier_decay_s`, so a client that bursts once recovers.
-- Everything fails open. A missing, unreadable or stale-layout model leaves
-  every client in the `normal` tier and the static limits carry the defense.
+The backend launch configuration used by the demo is:
 
-Honest framing for the report: with four known traffic profiles, the VAE does
-not beat a well-tuned cost limiter at detection. Its value is that it needs
-only normal traffic to train and flags shapes nobody hand-coded. Present it
-as adaptive tightening with an ablation, not as the primary defense.
+```bash
+vllm serve Qwen/Qwen2.5-0.5B-Instruct \
+  --dtype half --max-model-len 2048 \
+  --gpu-memory-utilization 0.85 --max-num-seqs 8 \
+  --host 127.0.0.1 --port 8000
+```
 
-## Identity rotation and the reserved lane
+For a manually managed gateway, run **one mode at a time**, in its own terminal or a background subprocess in Colab:
 
-Every per-client mechanism dilutes under identity rotation. With eight
-attacker IDs, each one presents a 0.125 cost share against a 0.111 equal
-share, so it looks almost fair: the token buckets see eight modest clients
-and fair-share ranking finds nobody above threshold. A smoke run reproduced
-exactly this — zero rejections, and legitimate p95 at 4.0 s.
+```bash
+python -u -m gateway --config configs/off.yaml \
+  --upstream http://127.0.0.1:8000 --port 8090 --run-id manual-flood-off
 
-The mechanism that holds up is `gateway/slots.py`, which partitions admission
-capacity by *request cost* instead of by identity. Expensive requests may
-only use the general pool; cheap requests try the general pool first and fall
-back to a small reserved pool. Low-cost traffic therefore always has
-somewhere to go, however many identities the expensive traffic arrives under,
-and rotating IDs buys an attacker nothing against it.
+# Stop that gateway, then start ON with a different run ID:
+python -u -m gateway --config configs/ratelimit_queue.yaml \
+  --upstream http://127.0.0.1:8000 --port 8090 --run-id manual-flood-on
+```
 
-A plain semaphore would not do this. It is FIFO, so a cheap request arriving
-behind a wall of expensive ones waits for an expensive one to finish.
+Check both health endpoints and a real `POST /v1/chat/completions` through the gateway before starting load. A healthy proxy does not prove its upstream is reachable.
 
-Calibration matters here: `cheap_cost_threshold` has to sit above the
-legitimate profile's typical `prompt_tokens + max_tokens` and below the
-attacker's. Set it from the cost distribution of a baseline run. If it is too
-high the reserved lane admits the attack; too low and legitimate requests
-never reach it.
+## Traffic profiles
 
-## Known limitations
+Each profile keeps four legitimate virtual users making small requests with a 32-token output limit. Attacker users send medium prompts with a 128-token limit for spike/flood, and long prompts with a 256-token limit for low-and-slow.
 
-- **Identity rotation still defeats the per-client limits** themselves, as
-  above. The reserved lane keeps cheap traffic flowing, but an attacker whose
-  requests are individually cheap and numerous, spread across many IDs, is
-  constrained only by `global_max_inflight`. Handling that properly needs a
-  secondary identity key and a new-client penalty budget.
-- **Cost is estimated before generation.** `max_tokens` is charged in full
-  even when the model stops early, so the limiter over-charges short replies.
-  This is deliberate: charging actual usage would let a client spend budget it
-  has not been granted yet.
-- **`max_tokens` is clamped, not rejected.** A request above
-  `max_tokens_ceiling` is silently reduced so the backend cannot be asked for
-  more work than was charged. Clients see a shorter completion than requested.
+| Profile | Timeline | Total virtual users during attack | Attacker wait after each response |
+|---|---|---:|---|
+| `normal` | 30 seconds, legitimate traffic only | 4; no attackers | Not applicable |
+| `spike` | 10 s baseline, 10 s attack, 10 s recovery | 24: 4 legitimate + 20 attackers | 0.05-0.15 s |
+| `flood` | 10 s baseline, 30 s attack, 10 s recovery | 32: 4 legitimate + 28 attackers | 0.05-0.15 s |
+| `low_slow` | 10 s baseline, 30 s expensive-request phase, 10 s recovery | 8: 4 legitimate + 4 attackers | 1.5-2.5 s |
 
-## Development
+This is a **closed-loop Locust workload**: each virtual user waits for a response before its next task. Identical user schedules and seeds therefore do not guarantee identical arrival timestamps or request counts. Fast rejection can increase attempted requests per second. Record actual load and do not describe the test as fixed-RPS replay.
+
+Example, with the OFF gateway above already running:
+
+```bash
+mkdir -p runs/manual-flood-off
+DOS_PROFILE=flood DOS_RUN_ID=manual-flood-off \
+DOS_RUN_DIR=runs/manual-flood-off DOS_SEED=42 \
+python -m locust -f loadgen/locustfile.py --headless \
+  --host http://127.0.0.1:8090 \
+  --csv runs/manual-flood-off/locust --csv-full-history --stop-timeout 125
+```
+
+Repeat with the ON gateway and a new matching run ID/directory. `DemoShape` controls duration and user counts, so do not add a conflicting `--users` or `--run-time`. Locust can exit nonzero for expected HTTP rejections; inspect the recorded status/reason breakdown rather than equating all failures with a generator crash.
+
+The generator sends `X-Client-ID`, unique `X-Request-ID`, and analysis-only `X-Traffic-Label`. There are no application-level retries. Prompts have a deterministic per-user/request prefix; the notebook does **not** disable vLLM prefix caching. Cache behavior and actual output length remain part of the recorded workload.
+
+## Mitigation modes and configuration
+
+| Config | Behavior |
+|---|---|
+| `configs/off.yaml` | Passthrough through the same gateway, with logging/sampling |
+| `configs/ratelimit.yaml` | Request-rate bucket, token-cost bucket and per-client concurrency limit |
+| `configs/ratelimit_queue.yaml` | Those limits plus global admission, bounded wait, cost-partitioned slots and pressure/fair-share checks |
+| `configs/full.yaml` | Adds optional VAE-adaptive tightening when a compatible trained model loads |
+
+The first mechanism limits individual clients. The second limits admitted in-flight work and returns `503` when a slot cannot be obtained within the configured wait. The wait is time-bounded; this is not a separate hard cap on the number of HTTP requests waiting at the gateway.
+
+`429` denotes client-specific limiting; `503` denotes admission shedding. A legitimate request rejected by either is still an unsuccessful legitimate request. The traffic label is logged but is not an input to the admission decision. Identity headers are a laboratory convention, not authenticated identities.
+
+The shipped combined config now has:
+
+```yaml
+backpressure:
+  global_max_inflight: 8
+  upstream_max_num_seqs: 8
+  reserved_cheap_slots: 2
+```
+
+However, other thresholds need calibration, and `configs/full.yaml` still specifies 32/32/8. The notebook creates `configs/demo_off.yaml` and `configs/demo_on.yaml` copies with the eight-slot values; it preserves the other thresholds. See the known-issues section before reusing these settings for another workload.
+
+## Logs, metrics and charts
+
+Each new notebook run writes `runs/<unique-run-id>/`:
+
+| File | What it records |
+|---|---|
+| `client_attempts.jsonl` | Request starts, IDs, client labels and traffic phase |
+| `client_requests.jsonl` | Client-observed latency, actual HTTP status, completion validity, token usage and rejection reason |
+| `gateway.jsonl` | Per-request decision, estimated cost, admitted slots and latency |
+| `gateway_samples.jsonl` | Timestamped gateway/backend state, sampled every 250 ms, including upstream staleness |
+| `gateway_config.json` | Resolved gateway config, tokenization method and whether VAE scoring is active |
+| `load_profile.json`, `demo_manifest.json` | Profile timing, seed, backend identity and run parameters |
+| `locust_*.csv`, process logs | Aggregate/history statistics, failures and diagnostics |
+
+Join client and gateway request records by `request_id`. Align state samples by **timestamps**, not request ID. Sampling already runs inside the gateway in both modes; another polling thread is unnecessary.
+
+The backend exposes running/waiting gauges, latency/queue-time distributions and completion/token counters. The gateway exposes admission/rejection/latency metrics. Headline results come from client attempts and valid completions: engine counters alone do not identify legitimate users or client timeouts.
+
+B6 calculates successful-request p50/p95 and reports success, failure, rejection, transport errors and unfinished requests alongside them. For attack profiles it selects requests **started during the attack window**; for normal it selects the normal window. These are not necessarily the same aggregates as Locust's whole-run CSV.
+
+The notebook saves `live_before_after.csv`, `live_legitimate_p95.png`, `queue_depth_off_vs_on.png`, `queue_depth_samples.csv` and `queue_depth_summary.csv`. Section C bundles selected raw run folders and outputs into `results/demo_evidence.zip`. `runs/` is Git-ignored, so committing the notebook alone does not preserve raw evidence.
+
+## Recorded results
+
+### Newer raw-log flood comparison
+
+Source: [`results/live_before_after.csv`](results/live_before_after.csv), backed by the two raw run folders in [`results/demo_evidence.zip`](results/demo_evidence.zip), pair `demo-20260911-180828-5190b1`. Both use real vLLM according to the saved manifests. The table uses the 10-40 second attack-start window; queue maxima use the fresh sampled series after load start.
+
+| Metric | OFF | ON |
+|---|---:|---:|
+| Legitimate attempts during attack | 33 | 96 |
+| Successful legitimate completions | 33 | 8 |
+| Legitimate success rate | 100.00% | 8.33% |
+| Legitimate failure/rejection rate | 0.00% | 91.67% |
+| Successful legitimate p50 | 2.810 s | 0.473 s |
+| Successful legitimate p95 | 2.986 s | 0.630 s |
+| Attacker rejection rate | 0.00% | 88.90% |
+| Maximum fresh observed backend queue | 24 | 0 |
+
+**Interpretation:** the ON configuration prevented a backend queue, but it did not preserve legitimate availability. Its lower p95 describes only eight successful legitimate responses. All 88 failed legitimate requests in the attack window were `503` / `queue_timeout`, not fair-share `queue_pressure` rejections.
+
+The logs also show why the reserved lane needs recalibration: legitimate estimated costs were 48-49 and attacker costs 320-322, while `cheap_cost_threshold` was 512. Both groups qualified as cheap, and attackers used reserved slots. This is separate from the long-running-cost bug described below; fixing that bug alone does not establish that this run will pass.
+
+![Observed backend queue; interpret together with the legitimate success-rate table](results/queue_depth_off_vs_on.png)
+
+### Earlier small smoke test
+
+Source: [`integration.ipynb`](integration.ipynb), [`results/flood_before_after.csv`](results/flood_before_after.csv), and the manually transcribed provenance in [`report/data/t4_runs.json`](report/data/t4_runs.json).
+
+That earlier one-attacker-identity test recorded legitimate p95 of **9.546 s OFF versus 1.323 s ON**, with 100% legitimate success in both arms and 50% attacker rejection ON. It contained only **3 legitimate requests OFF and 15 ON**. Its p95 is a small-sample demonstration, not a stable service-level estimate, and the earlier raw queue files are not bundled.
+
+Do not combine this smoke-test latency result with the newer Locust queue chart as though they came from the same experiment. The report's current figures use the older smoke data; the newer results must be acknowledged when updating the report.
+
+## Optional VAE layer
+
+`gateway/anomaly/` implements a NumPy VAE with a 12-feature input, a default hidden width of 32 and latent width of 4. Training uses latent sampling and KL regularization; serving reconstructs from the latent mean and turns standardized reconstruction error into a cached anomaly score. Tiers tighten existing client limits rather than replacing the hard controls.
+
+Training input must contain **normal-only** traffic with feature logging enabled. The loader does not filter attack labels for you.
+
+```bash
+mkdir -p models
+python -m gateway.anomaly.train runs/normal-1/gateway.jsonl -o models/vae.npz
+```
+
+Use the printed held-out score distribution to choose thresholds, and align `configs/full.yaml` to the actual backend before running it. A missing or incompatible model leaves anomaly scoring inactive while the configured static defenses remain. Check `anomaly_active` in `/gateway/state` or `gateway_config.json`.
+
+The bundled newer OFF/ON experiment has `anomaly_active: false` in both arms. It is not a VAE evaluation, and the repository does not establish a measured VAE advantage over the rules-only gateway.
+
+## Known issues and pending fixes
+
+The following status describes the reviewed `main` snapshot **`c81dce1`** and the uploaded repository. Writing this README does not merge code fixes.
+
+| Issue | Status at review |
+|---|---|
+| Long-running requests lose fair-share cost after the 10 s window | **Unresolved on main.** [PR #4](https://github.com/mena-04/DoS-Stress-Testing/pull/4) implements `expired_open_cost` and a regression test, but was still open/unmerged |
+| Main combined config uses eight backend/gateway slots and two reserved slots | **Applied** in `configs/ratelimit_queue.yaml`; not applied to `configs/full.yaml` |
+| `upstream_waiting_high: 24` / low `8` | **Still present.** Usually inactive with an eight-slot gateway in front of an eight-sequence backend; use measured local occupancy and validate thresholds |
+| Completion-latency EWMA recovery | **Unresolved.** Defaults remain 20,000/8,000 ms, with no time-based idle decay; long allowed generations can keep pressure elevated |
+| Reserved-lane threshold for the current Locust flood | **Needs calibration.** The saved 512 threshold also admits this workload's attackers into the cheap lane |
+| CLI log-directory preflight and flushed startup banner | **Not on main.** [PR #3](https://github.com/mena-04/DoS-Stress-Testing/pull/3) contains the changes and was still an unmerged draft; notebook subprocesses already use unbuffered Python |
+
+The fair-share bug was reproduced during review: at t=11 s, eight still-running attacker requests had zero accounted cost, while a new 43-cost legitimate request was assigned the entire share and marked for shedding. The checked-in suite passed **74 tests** but did not contain PR #4's new regression. Do not claim 75 passing tests for this snapshot.
+
+For a corrected experiment, incorporate and test the fixes, calibrate cost separation using measured normal/attack distributions, then rerun paired conditions with new run IDs. Do not relabel old data as results of the corrected code.
+
+Other limitations: per-client IDs can be rotated; the reserved lane protects qualifying cheap work rather than knowing who is legitimate; cost is an estimate based on requested generation length; prefix-cache and batching effects matter; the current evidence contains one raw paired profile and no repeated-run uncertainty estimates. The prototype is not an Internet-hardened production gateway.
+
+### Recommended order for future review
+
+Not done yet; listed here so the next pass has a fixed sequence instead of picking issues ad hoc:
+
+1. Review and, if accepted, merge [PR #4](https://github.com/mena-04/DoS-Stress-Testing/pull/4) (fair-share/`expired_open_cost` fix), then run its regression test plus the full suite. Preserve `FEATURE_NAMES` as-is — no VAE feature-layout change is required by this fix.
+2. Calibrate `cheap_cost_threshold` and the reserved-slot split against the actual Locust payload costs (legitimate ~48-49, attacker ~320-322 in the current flood), and align `configs/full.yaml` to the eight-slot backend used by `configs/ratelimit_queue.yaml`. Treat `upstream_waiting_high/low` and the latency-EWMA recovery bounds as a separate calibration pass against the real workload, not a copy of the current defaults.
+3. Review and, if accepted, merge [PR #3](https://github.com/mena-04/DoS-Stress-Testing/pull/3) (writable-log-directory preflight, flushed startup banners), using general startup-error wording rather than a fixed two-cause explanation.
+4. Rerun the flood profile OFF/ON with new run IDs once 1-2 land, on the same real backend/settings, and check legitimate completion rate before quoting p95 — a low p95 over a handful of successes is not availability.
+5. Update `report/report.html`, its data, and its figures from that new run. The current report text still claims 75 passing tests and describes the fair-share fix as done; the reviewed `main` snapshot has 74 tests and does not contain the fix. The report also still figures the historical smoke pair rather than the newer raw-log flood pair — reconcile both before submission rather than letting the README and the report disagree.
+
+## Troubleshooting and tests
+
+`/health` on the gateway is process health, not end-to-end inference health. A refused connection means the target listener is unavailable; a gateway `502` means forwarding failed; `429`/`503` are only expected mitigation outcomes when their reason and client class support that interpretation.
+
+Uvicorn's `STARTUP_FAILURE` code is 3. It does **not**, by itself, mean the upstream model is down or identify one unique root cause. Read the startup traceback. Log-path/lifespan errors and address conflicts must be diagnosed separately; a bind error can also exit with code 1. Use `python -u` or `PYTHONUNBUFFERED=1` for ordered redirected output, unique log files and bounded process waits. Stop the managed gateway rather than accumulating copies on new ports.
+
+Real-socket probes run during review, on the unchanged gateway:
+
+| Scenario | Observed result |
+|---|---|
+| Upstream address has no server | Gateway starts; `/health` returns 200; an inference call returns `502` |
+| Gateway port already occupied | Exit code 1, explicit address-in-use message |
+| Logging directory unwritable | Exit code 3, with a lifespan/log-directory traceback |
+
+So an unreachable upstream is not by itself a gateway startup failure, and a busy port does not necessarily produce exit code 3 in the tested Uvicorn version — always read the actual traceback rather than assuming from the exit code alone.
+
+Run CPU tests with:
 
 ```bash
 python -m pytest tests/ -q
 ```
 
-The suite runs without a GPU against `gateway/fake_vllm.py`, a vLLM stand-in
-calibrated to the measured T4 numbers (~35 ms/token at batch 1 rising to
-~44 ms/token at batch 100). It models `--max-num-seqs` admission so a real
-queue forms, optional prefix caching, and — with `--metrics-stall-ms` — a
-`/metrics` endpoint that stops answering under load, which is how the
-staleness fail-safe is tested.
+`gateway.fake_vllm` is a simulation for integration tests: it sleeps according to a cost model, implements sequence slots and metrics, and does not run a neural model. Passing its tests is not a substitute for successful real-GPU before/after evidence.
+
+**Open item, not yet fixed:** `report/report.html` currently states 75 passing tests and describes the fair-share repair as done. The reviewed `main` snapshot has 74 tests and does not contain that fix (see [Known issues](#known-issues-and-pending-fixes)). The report's figures also still come from the historical smoke pair, not the newer raw-log flood pair in [Recorded results](#recorded-results). Reconcile the report text/figures with whichever run is current before final submission — this README update does not do that for you.
+
+Submit the demo notebook, source code/configs, generated charts and summaries, and the raw evidence archive. Keep historical and corrected runs distinct. Run load tests only against infrastructure you own or are explicitly authorized to test; the supplied Locust demo restricts its target to loopback.
