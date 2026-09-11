@@ -1,3 +1,0 @@
-mode,legit_success_rate,legit_p50_s,legit_p95_s,attacker_success_rate,attacker_rejection_rate
-OFF,100.0,8.867,9.546,100.0,0.0
-ON,100.0,0.894,1.323,50.0,50.0
