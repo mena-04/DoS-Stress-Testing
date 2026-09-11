@@ -19,6 +19,9 @@ Two required mechanisms, plus an optional third:
 | Cost-partitioned admission with a reserved cheap lane | `503` | `queue_timeout` |
 | VAE anomaly-adaptive tightening (optional) | `429` | `anomaly_shed` |
 
+The submission report is in [`report/`](report/) — `bash report/build.sh`
+regenerates its figures and PDF from the recorded run data.
+
 ## Quick start
 
 ```bash

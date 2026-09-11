@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DoS Stress-Testing &amp; Auto-Mitigation for AI Inference Servers</title>
+<style>
+  @page { size: A4; margin: 11mm 13mm; }
+
+  html { font-size: 9.4pt; }
+  body {
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: #1a1a1a;
+    line-height: 1.36;
+    margin: 0;
+  }
+
+  .page { page-break-after: always; }
+  .page:last-child { page-break-after: auto; }
+
+  h1 { font-size: 21pt; line-height: 1.15; margin: 0 0 6px 0; letter-spacing: -0.3px; }
+  h2 {
+    font-size: 12.5pt; margin: 0 0 7px 0; padding-bottom: 3px;
+    border-bottom: 2px solid #1565c0; color: #0d47a1;
+  }
+  h3 { font-size: 10.5pt; margin: 11px 0 3px 0; color: #333; }
+  p  { margin: 0 0 7px 0; text-align: justify; }
+  ul { margin: 0 0 7px 0; padding-left: 17px; }
+  li { margin-bottom: 3.5px; }
+  code {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 8.6pt; background: #f2f4f7; padding: 0.5px 3px; border-radius: 2px;
+  }
+  strong { color: #000; }
+
+  /* Title block */
+  .title-wrap { text-align: center; padding: 9mm 0 6mm 0; border-bottom: 1px solid #ddd; }
+  .subtitle { font-size: 12pt; color: #444; margin: 7px 0 16px 0; }
+  .meta { font-size: 9.3pt; color: #555; line-height: 1.7; }
+  .meta strong { color: #222; font-size: 10.2pt; letter-spacing: 0.2px; }
+
+  .headline {
+    margin: 6mm auto 0 auto; max-width: 158mm;
+    background: #f4f8fd; border: 1px solid #cfe0f3; border-left: 4px solid #1565c0;
+    padding: 9px 13px;
+  }
+  .headline .lead { font-size: 9.6pt; color: #0d47a1; font-weight: bold;
+                    text-transform: uppercase; letter-spacing: 0.6px; margin-bottom: 5px; }
+
+  .kpis { display: flex; gap: 7px; margin-top: 7px; }
+  .kpi { flex: 1; background: #fff; border: 1px solid #cfe0f3; padding: 6px 4px; text-align: center; }
+  .kpi .big { font-size: 14pt; font-weight: bold; color: #0d47a1; display: block; }
+  .kpi .cap { font-size: 7.6pt; color: #555; display: block; line-height: 1.3; margin-top: 2px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 8.9pt; margin: 4px 0 8px 0; }
+  th, td { border: 1px solid #d4d4d4; padding: 3.5px 6px; text-align: left; }
+  th { background: #eef2f7; font-weight: bold; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.hl td { background: #f4f8fd; font-weight: bold; }
+
+  figure { margin: 5px 0 7px 0; text-align: center; page-break-inside: avoid; }
+  figure img { width: 100%; }
+  /* Narrower than the text column: these two figures are wide-aspect, and at
+     full width their height is what pushes the section onto a second page. */
+  figure.narrow img { width: 74%; }
+  figcaption { font-size: 8.3pt; color: #555; text-align: left; margin-top: 3px; line-height: 1.33; }
+
+  .note {
+    background: #fbf8ee; border-left: 3px solid #c8a415; padding: 6px 10px;
+    font-size: 9.1pt; margin: 7px 0;
+  }
+  .two { display: flex; gap: 11px; }
+  .two > div { flex: 1; }
+
+  /* Pipeline diagram, drawn in CSS so it stays sharp at print resolution
+     and cannot drift out of step with the text describing it. */
+  .flow { display: flex; align-items: stretch; gap: 0; margin: 8px 0 10px 0; }
+  .flow .box {
+    flex: 1; border: 1px solid #b9cde4; background: #f7fafd; padding: 6px 8px;
+    font-size: 8.4pt; line-height: 1.32;
+  }
+  .flow .box.mid { background: #eaf2fb; border-color: #1565c0; }
+  .flow .box .hd { font-weight: bold; font-size: 8.8pt; color: #0d47a1; display: block; margin-bottom: 3px; }
+  .flow .box .sub { color: #444; }
+  .flow .arrow { align-self: center; padding: 0 6px; color: #1565c0; font-size: 13pt; }
+  .flow .box ol { margin: 2px 0 0 0; padding-left: 14px; }
+  .flow .box ol li { margin-bottom: 1.5px; }
+  .foot { font-size: 7.8pt; color: #777; margin-top: 8px; border-top: 1px solid #e2e2e2; padding-top: 4px; }
+</style>
+</head>
+<body>
+
+<!-- ============================ PAGE 1 ============================ -->
+<div class="page">
+
+  <div class="title-wrap">
+    <h1>DoS Stress-Testing &amp; Auto-Mitigation<br>for AI Inference Servers</h1>
+    <div class="subtitle">Cost-aware admission control in front of a vLLM endpoint</div>
+    <div class="meta">
+      <strong>Team Phishers</strong><br>
+      Mena Abdelmoneim &middot; Salama Albedwawi &middot; Rewan Ramadan<br>
+      Target: vLLM 0.29.0 &middot; Qwen2.5-0.5B-Instruct &middot; NVIDIA Tesla T4<br>
+      <code>github.com/mena-04/DoS-Stress-Testing</code>
+    </div>
+  </div>
+
+  <div class="headline">
+    <div class="lead">Measured on the GPU, not simulated</div>
+    Under an eight-way flood of 512-token generations, turning the gateway on took legitimate
+    p95 latency from <strong>9.55&nbsp;s to 1.32&nbsp;s</strong> while <em>increasing</em> the number
+    of legitimate requests answered from <strong>3 to 15</strong> in the same 20-second window.
+    <strong>No legitimate request was rejected in either arm.</strong> Latency and throughput improved
+    together, which is what distinguishes protecting users from simply refusing them.
+    <div class="kpis">
+      <div class="kpi"><span class="big">7.2&times;</span><span class="cap">lower legitimate p95</span></div>
+      <div class="kpi"><span class="big">5.0&times;</span><span class="cap">more legitimate requests served</span></div>
+      <div class="kpi"><span class="big">0&rarr;50%</span><span class="cap">attacker rejection rate</span></div>
+      <div class="kpi"><span class="big">0%</span><span class="cap">legitimate traffic rejected</span></div>
+    </div>
+  </div>
+
+  <h2 style="margin-top:9mm">1. Project objective</h2>
+
+  <p><strong>The unit of load on an inference server is not the request &mdash; it is the token.</strong>
+  Every rate limiter in common use disagrees. <code>nginx limit_req</code>, API-gateway
+  requests-per-second rules and WAF throttles all count requests, because for a conventional
+  web service requests cost roughly the same. On an LLM endpoint they do not: a 24-token chat
+  reply and a 2048-token generation differ in GPU cost by nearly three orders of magnitude, and
+  both are a single well-formed request.</p>
+
+  <p>That gap is the whole attack. On our T4 we measured decoding at
+  <strong>0.035&nbsp;s per token</strong>, so one 1024-token generation occupies a vLLM sequence
+  slot for roughly <strong>36 seconds</strong>. The server was launched with
+  <code>--max-num-seqs 8</code>. Eight requests &mdash; a rate that no sane
+  requests-per-second limit would block, and that no anomaly rule would call a flood &mdash;
+  therefore hold the entire GPU for half a minute. The attacker needs no botnet, no spoofing
+  and no volume. It needs a large <code>max_tokens</code>.</p>
+
+  <h3>Who deploys this, and what it replaces</h3>
+  <p>The user is a team self-hosting an open-weights model (vLLM, TGI, Ollama) behind a public or
+  partner-facing API, without per-tenant GPU isolation &mdash; which is the normal situation,
+  because dedicating a GPU per tenant is what self-hosting is meant to avoid. Our gateway occupies
+  the position an API gateway already occupies, speaks the same OpenAI-compatible protocol, and
+  replaces the request-per-second rule living there with a <em>token-cost budget</em>. Nothing
+  about the model, the server or the client changes: the endpoint URL moves by one port.</p>
+
+  <p>Two things follow from that placement, and both shaped the design. Rejection has to be
+  <em>immediate and legible</em> &mdash; a caller that waits 30 seconds for a 503 has already been
+  denied service, so every refusal carries an <code>X-Gateway-Reason</code> header and a
+  <code>Retry-After</code>. And the mitigation must be <em>measurable</em>: the reason a team
+  tolerates a component in front of its inference server is evidence that it helps, which means
+  the gateway's job includes producing the before/after numbers in this report.</p>
+
+</div>
+
+<!-- ============================ PAGE 2 ============================ -->
+<div class="page">
+  <h2>2. Proposed solution</h2>
+
+  <p>A FastAPI reverse proxy in front of vLLM, carrying three admission layers. Every decision is
+  written to <code>gateway.jsonl</code> with its reason, so the analysis reads the gateway's own
+  record of what it did rather than inferring it from latency.</p>
+
+  <div class="flow">
+    <div class="box">
+      <span class="hd">Load generator</span>
+      <span class="sub">normal &middot; sudden spike &middot; sustained flood &middot; low-and-slow.
+      Sends <code>X-Client-ID</code> and <code>X-Traffic-Label</code>. Never retries a
+      rejection.</span>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="box mid">
+      <span class="hd">Mitigation gateway :8080</span>
+      <ol>
+        <li>per-client dual token bucket, charged on <code>prompt+max_tokens</code></li>
+        <li>queue cap, fair-share shedding, reserved cheap lane</li>
+        <li>VAE novelty tier (optional)</li>
+      </ol>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="box">
+      <span class="hd">vLLM :8000</span>
+      <span class="sub">Qwen2.5-0.5B-Instruct on a T4, <code>--max-num-seqs 8</code>. Its
+      <code>/metrics</code> queue depth is polled and fed back into layer 2.</span>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="box">
+      <span class="hd">Per-request log</span>
+      <span class="sub"><code>gateway.jsonl</code> plus a sampled state series, joined on
+      request ID to produce the table and figures in this report.</span>
+    </div>
+  </div>
+
+  <h3>Mechanism 1 &mdash; per-client dual token bucket (cost, not rate)</h3>
+  <p>Each client gets two buckets. The first meters request rate, as any limiter would. The second
+  meters <strong>cost</strong>, and is charged <code>prompt_tokens + max_tokens</code>
+  <strong>at admission, before generation starts</strong>. Charging up front is the load-bearing
+  detail: the true cost is only known when a generation finishes, and by then the GPU time is
+  spent, so the limiter must bill the declared intent. Three corollaries follow, each a way an
+  attacker would otherwise get in free: an omitted <code>max_tokens</code> is charged the
+  server's default, not zero, since the model will generate to the context limit; <code>n</code>
+  and <code>best_of</code> multiply the charge because they multiply the decode work; and a
+  request costing more than the whole bucket is refused as <code>cost_exceeds_budget</code>
+  rather than told to retry, since no wait would ever admit it.</p>
+
+  <h3>Mechanism 2 &mdash; queue cap with fast rejection</h3>
+  <p><code>global_max_inflight</code> is held <strong>at</strong> the backend's
+  <code>--max-num-seqs</code>. This is the single most important number in the system and the
+  least obvious. Admit more than vLLM can batch and the queue still forms &mdash; but it forms
+  <em>inside</em> vLLM, where the gateway can no longer see it, reorder it, or shed from it. We
+  measured exactly that: with 48 admission slots against a backend accepting 8, gateway pressure
+  read zero for an entire run while legitimate p95 reached 4.0&nbsp;s. Beyond the cap, a request
+  waits a bounded 200&nbsp;ms for a slot and is then refused with a 503. Pressure is evaluated
+  from four signals &mdash; local occupancy, a latency EWMA, and vLLM's own
+  <code>num_requests_waiting</code> and <code>num_requests_running</code> &mdash; each with
+  separate high and low water marks, so the controller cannot flap between shedding and admitting
+  on every tick. Under pressure, shedding is <em>fair-share</em>: clients are ranked by their share
+  of recent token cost and only those above an equal share are refused, which is what keeps a
+  quiet client flowing while a flooder absorbs the rejections.</p>
+
+  <h3>Mechanism 3 (optional layer) &mdash; VAE novelty detection</h3>
+  <p>A variational autoencoder over a 12-feature per-client behavioural window (request and cost
+  rate, prompt-size distribution, inter-arrival mean and spread, concurrency, prompt repeat ratio,
+  error rate, latency). It is trained <strong>on normal traffic only</strong> and scores
+  reconstruction error as novelty, so no attack is ever labelled for it and there is no leakage
+  between the attack profiles and the detector that flags them. Score tiers tighten a client's
+  bucket multipliers rather than blocking outright, decay instead of latching, and fail open.</p>
+
+  <div class="note">
+  <strong>Three rules that protect the measurement, not the server.</strong>
+  <strong>(1)</strong> The gateway never reads <code>X-Traffic-Label</code>. The label is logged for
+  the analysis join and is invisible to admission control &mdash; branching on ground truth would
+  turn "attacker rejection rate" into a measurement of the label rather than of the defence.
+  <strong>(2)</strong> Mitigation-off still goes through the gateway. <code>configs/off.yaml</code> is
+  a pure passthrough that still logs, so the proxy hop appears in both arms; a baseline that
+  bypassed the gateway would credit the mitigation with removing a cost it never added.
+  <strong>(3)</strong> The load generator never retries a 429 or 503. A retrying client converts
+  rejection into amplification and makes the rejection rate meaningless.
+  </div>
+
+  <h3>Why this approach now</h3>
+  <p>Two things make cost-aware admission practical today that were not available a few years ago.
+  vLLM's continuous batching and paged KV cache mean the scarce resource is
+  <em>sequence slots and KV blocks</em> &mdash; a countable quantity with a known limit &mdash;
+  rather than diffuse CPU time. And vLLM exports <code>num_requests_running</code> and
+  <code>num_requests_waiting</code> on a Prometheus endpoint, so a proxy can read the backend's
+  real queue instead of guessing at it from response times. A design predating that telemetry had
+  to infer saturation from latency alone, which is a lagging signal: by the time p95 moves, the
+  queue is already deep. We use latency as one of four inputs, and the other three are
+  structural.</p>
+
+  <p>The same shift is why a purely learned detector would be the wrong primary mechanism here.
+  Load shedding has to be correct on the first request of an attack it has never seen, and a
+  model cannot promise that. So the two required mechanisms are deterministic and auditable, the
+  VAE only adjusts their parameters, and the whole system degrades to the deterministic pair if
+  the model is unavailable.</p>
+
+</div>
+
+<!-- ============================ PAGE 3 ============================ -->
+<div class="page">
+  <h2>3. Solution validation</h2>
+
+  <table>
+    <tr><th style="width:27%">Component</th><th>What was actually run</th></tr>
+    <tr><td>Target service</td><td>vLLM 0.29.0, Qwen2.5-0.5B-Instruct, <code>--dtype half --max-model-len 2048 --gpu-memory-utilization 0.85 --max-num-seqs 8</code>, Tesla T4 16&nbsp;GB. Real GPU, real weights, real Prometheus metrics.</td></tr>
+    <tr><td>Load profiles</td><td>Normal, sudden spike, sustained flood and low-and-slow (Locust), plus a two-client probe that drives a cheap legitimate stream against an expensive attacker stream.</td></tr>
+    <tr><td>Mitigation arms</td><td>Four configs selected by one flag: <code>off</code>, <code>ratelimit</code>, <code>ratelimit_queue</code>, <code>full</code>. The ablation isolates which mechanism produced which effect.</td></tr>
+    <tr><td>Automated tests</td><td>75 unit and integration tests, including end-to-end runs over real sockets against a backend stand-in.</td></tr>
+    <tr><td>GPU-free reproduction</td><td><code>gateway.fake_vllm</code> reproduces the measured T4 timing (0.035&nbsp;s/token decode, 0.0026&nbsp;s batch penalty, 0.0002&nbsp;s/token prefill) and vLLM's metric shape, so the whole experiment &mdash; including saturation &mdash; runs on a laptop and in CI.</td></tr>
+  </table>
+
+  <h3>Four negative results, and what each one changed</h3>
+  <p>The mitigation was the easy half. Most of our effort went into tests that appeared to pass
+  while measuring nothing, and each one forced a design change.</p>
+
+  <p><strong>(a) The first overload test did not overload anything.</strong> Fifty concurrent
+  "expensive" requests returned p50&nbsp;5.603&nbsp;s, p95&nbsp;5.700&nbsp;s,
+  max&nbsp;5.701&nbsp;s. Those three values lying within 0.1&nbsp;s of each other is the tell:
+  every request finished in the same batch, so no queue ever formed and the run was a
+  measurement of batch latency, not of saturation. Two causes. Automatic prefix caching is on by
+  default in vLLM's V1 engine, and all fifty prompts were identical, so forty-nine of them
+  skipped prefill almost entirely. And KV capacity was never the constraint: at 24 layers
+  &times; 2 KV heads &times; 64 head-dim &times; 2 &times; 2&nbsp;bytes, this model spends about
+  12&nbsp;KB per token, so ~11&nbsp;GB of KV cache holds ~900k tokens against a demand of ~100k
+  &mdash; a 9&times; margin. <em>Changed:</em> randomised prompts, prefix caching disabled for
+  load runs, and a concurrency sweep to locate the knee rather than assuming one exists at 50.</p>
+
+  <p><strong>(b) The queue-depth series was all zeros, and the server looked healthy.</strong>
+  The metrics sampler scraped <code>/metrics</code> inside a bare <code>except: pass</code>, and
+  read a missing value as <code>0</code>. Under load, <code>/metrics</code> is exactly what stops
+  responding &mdash; so the moment the queue got deep, the recorded queue depth went to zero.
+  <em>Changed:</em> the gateway's pressure controller treats an absent upstream snapshot as
+  <em>unknown</em> and never as empty; it falls back to the two signals it owns locally, and
+  staleness is recorded per sample and per request so a gap in the data is visible as a finding
+  rather than smoothing into a flat line.</p>
+
+  <p><strong>(c) Identity rotation defeated every per-client defence.</strong> Splitting the same
+  flood across eight client IDs produced <em>zero</em> rejections and a legitimate p95 of
+  4.0&nbsp;s. This is not a bug to patch; per-client buckets dilute under rotation by
+  construction, and any limiter keyed on identity has the same hole. <em>Changed:</em> a reserved
+  admission lane partitioned on <strong>request cost</strong> rather than identity. Cheap requests
+  can always use it, expensive ones never can, and an attacker gains nothing from rotating IDs
+  because the partition does not ask who is calling.</p>
+
+  <p><strong>(d) Fair-share inverted under long-running requests.</strong> Cost is charged at
+  admission and aged out of a 10-second window, but a 512&ndash;1024-token generation runs far
+  longer than that. So an attacker holding all eight slots aged out to a recorded cost of
+  <code>0.0</code>, while the steady cheap client &mdash; the only one with <em>recent</em>
+  cost &mdash; measured as 100% of the window and was shed: legitimate traffic took
+  <strong>45.5% rejection</strong> at <code>cost_share=1.0</code>, with the flooder refused for
+  nothing. Precisely backwards, and worst on the low-and-slow profile, which is built out of
+  long-lived requests on purpose. <em>Changed:</em> in-flight cost stays charged until the request
+  completes, is released on completion rather than held as a penalty, and is dropped entirely when
+  a client has nothing running, so a lost completion cannot charge a client forever.</p>
+
+  <h3>Statistical care</h3>
+  <ul>
+    <li><strong>Latency is never reported without throughput beside it.</strong> A gateway that
+    rejects 95% of traffic has an excellent p95, because shedding removes load from the latency
+    sample. Our headline p95 fell 7.2&times; <em>while</em> legitimate throughput rose 5.0&times;
+    and legitimate rejection stayed at zero &mdash; three facts that cannot all hold if the gain
+    came from refusing users.</li>
+    <li>Percentiles are nearest-rank over <em>successful</em> requests only; a fast 503 is a
+    failure, not a quick success, and is counted in the rate columns instead.</li>
+    <li>The VAE sees only normal traffic in training and scores novelty, so no attack profile
+    appears on both sides of the train/test boundary.</li>
+    <li>One invalid run was <strong>excluded and recorded</strong> rather than quietly dropped: a
+    pass in which every request returned <code>ConnectError</code> because no gateway was
+    listening. Its 35,128 attacker "requests" are refused connections returning instantly, not
+    load.</li>
+  </ul>
+
+</div>
+
+<!-- ============================ PAGE 4 ============================ -->
+<div class="page">
+  <h2>4. Results</h2>
+
+  <p>Both arms below are the same load against the same live vLLM server on the same T4, differing
+  only in the config the gateway was started with: eight concurrent 512-token attacker requests
+  from a single identity, against a legitimate client issuing one 32-token request every
+  0.4&nbsp;s, for 20&nbsp;seconds.</p>
+
+  <table>
+    <tr>
+      <th style="width:34%">Metric</th>
+      <th class="num">Mitigation off</th>
+      <th class="num">Mitigation on</th>
+      <th class="num">Change</th>
+    </tr>
+    <tr class="hl"><td>Legitimate p95 latency</td><td class="num">9.546 s</td><td class="num">1.323 s</td><td class="num">7.2&times; lower</td></tr>
+    <tr class="hl"><td>Legitimate p50 latency</td><td class="num">8.867 s</td><td class="num">0.894 s</td><td class="num">9.9&times; lower</td></tr>
+    <tr class="hl"><td>Legitimate requests answered</td><td class="num">3</td><td class="num">15</td><td class="num">5.0&times; more</td></tr>
+    <tr><td>Legitimate success rate</td><td class="num">100%</td><td class="num">100%</td><td class="num">&mdash;</td></tr>
+    <tr><td>Legitimate requests rejected</td><td class="num">0</td><td class="num">0</td><td class="num">&mdash;</td></tr>
+    <tr><td>Attacker requests admitted</td><td class="num">24</td><td class="num">8</td><td class="num">3.0&times; fewer</td></tr>
+    <tr><td>Attacker rejection rate</td><td class="num">0%</td><td class="num">50%</td><td class="num">+50 pts</td></tr>
+    <tr><td>Attacker p95 latency</td><td class="num">10.355 s</td><td class="num">12.113 s</td><td class="num">1.17&times; higher</td></tr>
+    <tr><td>Rejection reason</td><td class="num">&mdash;</td><td class="num">client_concurrency &times;8 (429)</td><td class="num"></td></tr>
+  </table>
+
+  <figure>
+    <img src="figures/fig1_legit_protection.png" alt="Legitimate latency and throughput, off versus on">
+    <figcaption><strong>Figure 1.</strong> The two panels on the left are the result; the panel on
+    the right is what makes it credible. Latency fell and the number of requests served rose at the
+    same time, with zero legitimate rejections in either arm, so the improvement is not shedding in
+    disguise.</figcaption>
+  </figure>
+
+  <figure class="narrow">
+    <img src="figures/fig2_cost_separation.png" alt="Legitimate versus attacker p95 in both arms">
+    <figcaption><strong>Figure 2.</strong> The failure mode, stated directly. Unmitigated, the
+    cheap request and the expensive one complete in almost the same time (9.55&nbsp;s vs
+    10.36&nbsp;s) &mdash; one shared queue charges a 32-token reply the same wait as a 512-token
+    generation. With cost-aware admission the two separate by 9&times;: the caller asking for more
+    work waits for it.</figcaption>
+  </figure>
+
+</div>
+
+<!-- ============================ PAGE 5 ============================ -->
+<div class="page">
+  <figure class="narrow" style="margin-top:0">
+    <img src="figures/fig3_outcomes.png" alt="Outcome of every request in both arms">
+    <figcaption><strong>Figure 3.</strong> Every request in both arms, as counts rather than rates.
+    Unmitigated, the attacker gets 24 full generations and the legitimate client gets 3 slow ones.
+    Mitigated, the attacker is cut to 8 and refused 8 with an explicit reason, and that reclaimed
+    capacity is what the legitimate client's 15 answered requests are made of.</figcaption>
+  </figure>
+
+  <h3>Interpretation</h3>
+  <p>The capacity did not appear from nowhere and the total work done barely changed &mdash; it was
+  <em>reallocated</em>. Unmitigated, eight expensive generations hold all eight sequence slots, and
+  a 32-token request arriving behind them waits for one to finish; that is the 8.9&nbsp;s. The
+  gateway's cap keeps the queue on its own side of the wire, where the reserved cheap lane and
+  fair-share ranking can order it, so a small request is no longer stuck behind a large one. Note
+  that the attacker's own p95 <em>rose</em>, from 10.36&nbsp;s to 12.11&nbsp;s, while half its
+  requests were refused outright. Being an expensive client became slower and less reliable, which
+  is exactly the incentive a cost-based limiter is supposed to create.</p>
+
+  <h3>Limitations we can state precisely</h3>
+  <ul>
+    <li><strong>This run used a single attacker identity.</strong> The rejections are
+    <code>client_concurrency</code> &mdash; a per-client cap, which is the one mechanism that
+    identity rotation defeats (finding&nbsp;c). The cost-partitioned reserved lane exists for the
+    rotating case and is verified against the calibrated stand-in, <em>not yet on the T4</em>. The
+    honest headline is therefore: proven on the GPU against a single-identity flood, proven in
+    simulation against a rotating one.</li>
+    <li><strong>Small samples.</strong> Three and fifteen legitimate requests in 20&nbsp;seconds.
+    The p50/p95 separation is many times larger than the observed spread (max equals p95 in three
+    of the four series), so the direction is not in doubt, but a longer run is needed before
+    quoting a confidence interval.</li>
+    <li><strong>The four Locust profiles were run against vLLM directly</strong>, before the
+    gateway was in the path. They characterise the backend and calibrate the stand-in; they do not
+    yet measure mitigation effect per profile. Re-pointing them at port 8080 is the immediate next
+    step and needs no new code.</li>
+    <li><strong>Thresholds are matched to this backend, not tuned.</strong>
+    <code>global_max_inflight</code> tracks <code>--max-num-seqs</code>, but the latency water
+    marks still assume a cheaper request mix than a 1024-token ceiling produces, which leaves
+    pressure reading ELEVATED for most of a flood. Calibration follows the concurrency sweep.</li>
+  </ul>
+
+  <h3>Conclusions</h3>
+  <p><strong>Rate limiting the wrong quantity provides no protection at all.</strong> Eight
+  requests, within any plausible requests-per-second budget, took a GPU-backed endpoint from
+  sub-second to nine-second responses. Charging <code>prompt_tokens + max_tokens</code> against a
+  per-client budget at admission time, and capping concurrent admissions at the backend's real
+  batch width, restored a 1.3&nbsp;s p95 and served five times as many legitimate requests without
+  refusing a single one.</p>
+
+  <p><strong>Hold the queue where you can still act on it.</strong> Admitting more than
+  <code>--max-num-seqs</code> does not remove the queue, it only moves it somewhere the mitigation
+  cannot reach. This one alignment mattered more than any threshold we tuned.</p>
+
+  <p><strong>Partition on cost, not on identity.</strong> Every identity-keyed defence dilutes
+  under rotation, and ours did &mdash; eight IDs, zero rejections. The mechanism that survived was
+  the one that never asks who is calling.</p>
+
+  <p><strong>The measurement is as easy to get wrong as the mitigation.</strong> Our first flood
+  did not overload the server, and our first queue-depth series read zero precisely when the queue
+  was deepest. Three of the four design changes above came from a test that proved nothing while
+  appearing to pass &mdash; which is why the gateway records its own decisions, its own reasons,
+  and the staleness of the signals it acted on.</p>
+
+  <div class="foot">
+    Results and conclusions &middot; Page 5 of 5 &middot;
+    All figures generated by <code>report/make_figures.py</code> from
+    <code>report/data/t4_runs.json</code>, which records the notebook cell each number came from.
+  </div>
+</div>
+
+</body>
+</html>
