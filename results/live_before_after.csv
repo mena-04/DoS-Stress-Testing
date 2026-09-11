@@ -1,0 +1,5 @@
+profile,traffic_label,window,attempted,success_rate_pct,failure_rate_pct,rejection_rate_pct,transport_or_unfinished,http_502_504,unfinished,p50_s,p95_s,mode,run_dir
+flood,legit,attack,33,100.0,0.0,0.0,0,0,0,2.810242919000075,2.986318628199979,OFF,/content/DoS-Stress-Testing/runs/demo-20260911-180828-5190b1-flood-off
+flood,attacker,attack,257,100.0,0.0,0.0,0,0,0,3.447497870999996,3.74273349899986,OFF,/content/DoS-Stress-Testing/runs/demo-20260911-180828-5190b1-flood-off
+flood,legit,attack,96,8.333333333333332,91.66666666666666,91.66666666666666,0,0,0,0.47288177500001893,0.6295786374499244,ON,/content/DoS-Stress-Testing/runs/demo-20260911-180828-5190b1-flood-on
+flood,attacker,attack,2000,11.1,88.9,88.9,0,0,0,1.233588423500123,1.413137785200149,ON,/content/DoS-Stress-Testing/runs/demo-20260911-180828-5190b1-flood-on
