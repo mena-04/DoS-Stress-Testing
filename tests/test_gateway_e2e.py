@@ -371,6 +371,21 @@ async def test_state_samples_record_upstream_staleness(tuned_config, gateway):
 
 
 @pytest.mark.asyncio
+async def test_baseline_run_still_records_upstream_queue_depth(tuned_config, gateway):
+    """The mitigation-off baseline needs its own queue-depth series, or the
+    mitigated run's chart has nothing to be compared against."""
+    client, app = await gateway(tuned_config(mode="off"))
+    await client.post("/v1/chat/completions", json=payload(CHEAP), headers=headers("c1"))
+    await asyncio.sleep(0.3)
+    app.state.log.samples.flush()
+    with open(app.state.log.samples.path) as handle:
+        samples = [json.loads(line) for line in handle if line.strip()]
+    fresh = [s for s in samples if not s["upstream_stale"]]
+    assert fresh, "no upstream metrics were sampled in off mode"
+    assert fresh[-1]["upstream_running"] is not None
+
+
+@pytest.mark.asyncio
 async def test_context_length_errors_pass_through_as_400(tuned_config, gateway):
     """A 400 from the backend is a client error, not mitigation and not
     overload. It has to stay distinguishable in the logs."""
