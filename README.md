@@ -4,7 +4,7 @@ An end-to-end experimental testbed for **application-layer overload of an AI inf
 
 The evaluation question is not simply whether the gateway rejects traffic. It is **whether legitimate users still receive successful, low-latency inference responses while competing with abusive traffic**.
 
-**Start here:** [Demo notebook](final_demo.ipynb) | [Traffic profiles](loadgen/locustfile.py) | [Recorded results](results/) | [Report](report/report.pdf) | [Report sources](report/)
+**Start here:** [Demo notebook](final_demo.ipynb) | [Traffic profiles](loadgen/locustfile.py) | [Recorded results](results/) | [Submission deck](report/slides.pdf) | [Deck sources](report/)
 
 > **Evidence status:** the repository contains an encouraging small-sample smoke test and a newer, more demanding Locust flood comparison. The newer run bounded the backend queue but rejected most legitimate requests. These are different experiments, not interchangeable results. See [Recorded results](#recorded-results) and [Known issues](#known-issues-and-pending-fixes).
 
@@ -202,7 +202,7 @@ backpressure:
   reserved_cheap_slots: 2
 ```
 
-However, other thresholds need calibration, and `configs/full.yaml` still specifies 32/32/8. The notebook creates `configs/demo_off.yaml` and `configs/demo_on.yaml` copies with the eight-slot values; it preserves the other thresholds. See the known-issues section before reusing these settings for another workload.
+`configs/full.yaml` now carries the same three values, so it differs from `configs/ratelimit_queue.yaml` only by its anomaly block; previously it specified 32/32/8, which meant the VAE arm of the ablation also changed capacity. Other thresholds still need calibration. The notebook creates `configs/demo_off.yaml` and `configs/demo_on.yaml` copies with the eight-slot values; it preserves the other thresholds. See the known-issues section before reusing these settings for another workload.
 
 ## Logs, metrics and charts
 
@@ -279,7 +279,8 @@ The following status describes the reviewed `main` snapshot **`c81dce1`** and th
 | Issue | Status at review |
 |---|---|
 | Long-running requests lose fair-share cost after the 10 s window | **Unresolved on main.** [PR #4](https://github.com/mena-04/DoS-Stress-Testing/pull/4) implements `expired_open_cost` and a regression test, but was still open/unmerged |
-| Main combined config uses eight backend/gateway slots and two reserved slots | **Applied** in `configs/ratelimit_queue.yaml`; not applied to `configs/full.yaml` |
+| Main combined config uses eight backend/gateway slots and two reserved slots | **Applied** in `configs/ratelimit_queue.yaml`, and now in `configs/full.yaml` too, so the VAE arm no longer changes capacity as well as the anomaly layer |
+| Reserved lane admitted this flood's attackers | **Still open, and now the headline result.** `cheap_cost_threshold` 512 against legitimate cost 48-49 and attacker cost 320-322 meant both classes counted as cheap; 88 of 96 legitimate requests in the attack window got `503 queue_timeout` |
 | `upstream_waiting_high: 24` / low `8` | **Still present.** Usually inactive with an eight-slot gateway in front of an eight-sequence backend; use measured local occupancy and validate thresholds |
 | Completion-latency EWMA recovery | **Unresolved.** Defaults remain 20,000/8,000 ms, with no time-based idle decay; long allowed generations can keep pressure elevated |
 | Reserved-lane threshold for the current Locust flood | **Needs calibration.** The saved 512 threshold also admits this workload's attackers into the cheap lane |
@@ -299,7 +300,7 @@ Not done yet; listed here so the next pass has a fixed sequence instead of picki
 2. Calibrate `cheap_cost_threshold` and the reserved-slot split against the actual Locust payload costs (legitimate ~48-49, attacker ~320-322 in the current flood), and align `configs/full.yaml` to the eight-slot backend used by `configs/ratelimit_queue.yaml`. Treat `upstream_waiting_high/low` and the latency-EWMA recovery bounds as a separate calibration pass against the real workload, not a copy of the current defaults.
 3. Review and, if accepted, merge [PR #3](https://github.com/mena-04/DoS-Stress-Testing/pull/3) (writable-log-directory preflight, flushed startup banners), using general startup-error wording rather than a fixed two-cause explanation.
 4. Rerun the flood profile OFF/ON with new run IDs once 1-2 land, on the same real backend/settings, and check legitimate completion rate before quoting p95 — a low p95 over a handful of successes is not availability.
-5. Update `report/report.html`, its data, and its figures from that new run. The current report text still claims 75 passing tests and describes the fair-share fix as done; the reviewed `main` snapshot has 74 tests and does not contain the fix. The report also still figures the historical smoke pair rather than the newer raw-log flood pair — reconcile both before submission rather than letting the README and the report disagree.
+5. Update the submission deck from that new run. **Done for the current snapshot:** the long-form `report/report.html` and `report.pdf` have been removed rather than maintained in parallel, and `report/slides.pdf` now reports the newer raw-log flood pair as its primary result, states 74 tests, and marks the fair-share fix as diagnosed but unmerged. Its data lives in `report/data/locust_flood.json`, transcribed from the raw logs. Rebuild it with `bash report/build.sh` after any rerun.
 
 ## Troubleshooting and tests
 
@@ -325,6 +326,6 @@ python -m pytest tests/ -q
 
 `gateway.fake_vllm` is a simulation for integration tests: it sleeps according to a cost model, implements sequence slots and metrics, and does not run a neural model. Passing its tests is not a substitute for successful real-GPU before/after evidence.
 
-**Open item, not yet fixed:** `report/report.html` currently states 75 passing tests and describes the fair-share repair as done. The reviewed `main` snapshot has 74 tests and does not contain that fix (see [Known issues](#known-issues-and-pending-fixes)). The report's figures also still come from the historical smoke pair, not the newer raw-log flood pair in [Recorded results](#recorded-results). Reconcile the report text/figures with whichever run is current before final submission — this README update does not do that for you.
+**Resolved:** the submission document no longer disagrees with this README. `report/report.html` and `report/report.pdf` are gone, and `report/slides.pdf` states 74 passing tests, marks the fair-share repair as diagnosed but unmerged, and uses the newer raw-log flood pair from [Recorded results](#recorded-results) as its primary result with the historical smoke pair labelled as a small-sample secondary. The fair-share fix itself is still unmerged — see [Known issues](#known-issues-and-pending-fixes).
 
 Submit the demo notebook, source code/configs, generated charts and summaries, and the raw evidence archive. Keep historical and corrected runs distinct. Run load tests only against infrastructure you own or are explicitly authorized to test; the supplied Locust demo restricts its target to loopback.
