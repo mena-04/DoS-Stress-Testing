@@ -1,7 +1,5 @@
 # DoS Stress-Testing & Auto-Mitigation for AI Inference Servers
 
-Menna; Salama; Rawan
-
 Mitigation gateway that sits between the load generator and a vLLM server
 running `Qwen/Qwen2.5-0.5B-Instruct`.
 
