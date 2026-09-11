@@ -1,0 +1,19 @@
+# Per-client rate limiting only: no queue awareness, no fair-share.
+#
+# Isolates how much of the defense comes from bounding individual clients
+# versus from reacting to backend pressure.
+mode: ratelimit
+
+upstream:
+  base_url: http://127.0.0.1:8000
+
+rate_limit:
+  requests_per_sec: 5.0
+  requests_burst: 10.0
+  tokens_per_sec: 2000.0
+  tokens_burst: 8000.0
+  client_max_inflight: 4
+  max_tokens_ceiling: 1024
+
+logging:
+  run_id: ratelimit
