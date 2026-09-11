@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>DoS Stress-Testing &amp; Auto-Mitigation for AI Inference Servers</title>
+<style>
+  /* 16:9, the same 13.333in x 7.5in as a standard slide. */
+  @page { size: 338.667mm 190.5mm; margin: 0; }
+
+  :root {
+    /* Artifakt first: it is Autodesk-proprietary, so this build falls back to
+       Fira Sans, which Erik Spiekermann and Ralph du Carrois also designed and
+       which is openly licensed. If Artifakt is installed, it is used. */
+    --display: "Artifakt Legend", "Artifakt Element", "Fira Sans", sans-serif;
+    --body: "Aptos", "Aptos Display", "Fira Sans", sans-serif;
+    --mono: "Cascadia Mono", "Cascadia Code", monospace;
+
+    --bg: #2e3033;
+    --panel: #383b3e;
+    --line: #4a4e52;
+    --text: #e8e9ea;
+    --muted: #a8adb2;
+    --dim: #83888d;
+    --accent: #cf9b4f;
+    --off: #b5544a;
+    --on: #5b8db8;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); }
+  body { font-family: var(--body); color: var(--text); font-size: 11pt; line-height: 1.4; }
+
+  .slide {
+    width: 338.667mm; height: 190.5mm;
+    padding: 13mm 15mm 14mm 15mm;
+    background: var(--bg);
+    page-break-after: always;
+    position: relative;
+    overflow: hidden;
+    /* Column flex so the closing band can be anchored to the baseline. Slack
+       then falls between the content and the band instead of below it. */
+    display: flex; flex-direction: column;
+  }
+  .slide:last-child { page-break-after: auto; }
+
+  /* ---- shared chrome ---- */
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 8.5pt; letter-spacing: 1.6px; text-transform: uppercase;
+    color: var(--dim);
+  }
+  .shead { display: flex; align-items: baseline; gap: 10mm; border-bottom: 1px solid var(--line);
+           padding-bottom: 3.5mm; margin-bottom: 6mm; }
+  .shead .num { font-family: var(--mono); font-size: 13pt; color: var(--accent); }
+  .shead h2 { font-family: var(--display); font-size: 21pt; font-weight: 600; margin: 0;
+              letter-spacing: -0.3px; }
+  .shead .tag { margin-left: auto; font-family: var(--mono); font-size: 8.5pt;
+                color: var(--dim); letter-spacing: 0.8px; }
+
+  .stamp {
+    position: absolute; bottom: 6mm; left: 15mm; right: 15mm;
+    display: flex; justify-content: space-between;
+    font-family: var(--mono); font-size: 7.5pt; color: #6d7276; letter-spacing: 0.6px;
+  }
+
+  h3 { font-family: var(--display); font-size: 12pt; font-weight: 600; margin: 0 0 2.5mm 0; }
+  p  { margin: 0 0 3mm 0; }
+  .mut { color: var(--muted); }
+  code, .n { font-family: var(--mono); font-size: 0.92em; }
+  .n { color: var(--text); }
+  strong { font-weight: 600; color: #ffffff; }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); padding: 5mm 6mm; }
+
+  /* ---- slide 1 ---- */
+  .title-block { margin-top: 17mm; }
+  .title-block h1 {
+    font-family: var(--display); font-weight: 600;
+    font-size: 40pt; line-height: 1.06; margin: 4mm 0 0 0; letter-spacing: -1px;
+  }
+  .title-block .sub { font-size: 15pt; color: var(--muted); margin-top: 5mm; font-weight: 400; }
+  .byline { margin-top: 9mm; padding-top: 5mm; border-top: 1px solid var(--line);
+            display: flex; gap: 14mm; align-items: baseline; }
+  .byline .team { font-family: var(--display); font-size: 13pt; font-weight: 600; }
+  .byline .names { color: var(--muted); font-size: 11pt; }
+  .byline .target { margin-left: auto; font-family: var(--mono); font-size: 8.5pt;
+                    color: var(--dim); text-align: right; line-height: 1.7; }
+
+  .claim {
+    position: absolute; bottom: 42mm; left: 15mm; right: 15mm;
+    border-left: 2px solid var(--accent); padding-left: 5mm;
+    font-size: 12pt; line-height: 1.5; color: var(--muted); max-width: 250mm;
+  }
+  /* Keeps "9.55 s to 1.32 s" from breaking across lines mid-figure. */
+  .claim strong { color: #ffffff; white-space: nowrap; }
+
+  .kpis { position: absolute; bottom: 15mm; left: 15mm; right: 15mm; display: flex; gap: 4mm; }
+  .kpi { flex: 1; background: var(--panel); border: 1px solid var(--line);
+         border-top: 2px solid var(--accent); padding: 4mm 5mm; }
+  .kpi .v { font-family: var(--mono); font-size: 21pt; line-height: 1; color: #ffffff; }
+  .kpi .k { font-size: 9pt; color: var(--muted); margin-top: 2.5mm; line-height: 1.35; }
+
+  /* ---- layout helpers ---- */
+  .cols { display: flex; gap: 8mm; }
+  .cols > * { flex: 1; }
+  .c40 { flex: 0 0 40%; }
+  .c55 { flex: 0 0 55%; }
+
+  .lead {
+    font-family: var(--display); font-size: 17pt; font-weight: 600; line-height: 1.25;
+    margin: 0 0 6mm 0; letter-spacing: -0.3px;
+  }
+  .lead em { color: var(--accent); font-style: normal; }
+
+  ul { margin: 0; padding-left: 5mm; }
+  li { margin-bottom: 2.5mm; }
+  li::marker { color: var(--dim); }
+
+  /* arithmetic panel */
+  .calc { font-family: var(--mono); font-size: 10pt; line-height: 2.1; }
+  .calc .row { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); }
+  .calc .row:last-child { border-bottom: 0; }
+  .calc .row .lbl { color: var(--muted); }
+  .calc .row.tot .lbl, .calc .row.tot .val { color: var(--accent); }
+
+  /* pipeline */
+  .flow { display: flex; align-items: stretch; gap: 0; margin-bottom: 6mm; }
+  .flow .box { flex: 1; background: var(--panel); border: 1px solid var(--line); padding: 3.5mm 4mm; }
+  .flow .box.mid { border-color: var(--accent); }
+  .flow .box .hd { font-family: var(--display); font-size: 10pt; font-weight: 600; display: block;
+                   margin-bottom: 2mm; }
+  .flow .box .bd { font-size: 8.5pt; color: var(--muted); line-height: 1.4; }
+  .flow .arrow { align-self: center; padding: 0 3.5mm; color: var(--dim); font-size: 12pt; }
+
+  .mechs { display: flex; gap: 4mm; }
+  .mech { flex: 1; background: var(--panel); border: 1px solid var(--line); padding: 4mm 4.5mm; }
+  .mech .tagn { font-family: var(--mono); font-size: 8pt; color: var(--accent); letter-spacing: 1px; }
+  .mech h4 { font-family: var(--display); font-size: 11pt; font-weight: 600; margin: 1.5mm 0 2mm 0; }
+  .mech p { font-size: 9pt; color: var(--muted); margin: 0; line-height: 1.45; }
+
+  .rules { margin-top: 5mm; border-top: 1px solid var(--line); padding-top: 3.5mm;
+           font-size: 9pt; color: var(--muted); }
+  .rules b { color: var(--text); font-weight: 600; }
+
+  /* Everything between the header and the closing band. Centred so leftover
+     height splits above and below the content instead of pooling in one gap. */
+  .body { flex: 1; display: flex; flex-direction: column; justify-content: center; }
+  .body > *:last-child { margin-bottom: 0; }
+
+  /* bottom band of three short items, used on several slides */
+  .band { display: flex; gap: 5mm; margin-top: 7mm;
+          border-top: 1px solid var(--line); padding-top: 4.5mm; }
+  .band > div { flex: 1; }
+  .band .bh { font-family: var(--mono); font-size: 8pt; letter-spacing: 1px;
+              text-transform: uppercase; color: var(--accent); margin-bottom: 2mm; }
+  .band .bt { font-size: 9.2pt; color: var(--muted); line-height: 1.45; }
+  .band .bt b { color: var(--text); font-weight: 600; }
+
+  .bandtitle { font-family: var(--display); font-size: 11pt; font-weight: 600;
+               margin-bottom: 3.5mm; }
+
+  /* reason codes */
+  .codes { width: 100%; font-size: 8.8pt; }
+  .codes td { padding: 1.6mm 3mm; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .codes tr:last-child td { border-bottom: 0; }
+  .codes .st { font-family: var(--mono); color: var(--accent); width: 12mm; }
+  .codes .rs { font-family: var(--mono); font-size: 8.2pt; color: var(--muted); }
+
+  /* findings */
+  .find { display: flex; gap: 4mm; margin-bottom: 3.5mm; }
+  .find .id { font-family: var(--mono); font-size: 9.5pt; color: var(--accent); flex: 0 0 6mm; }
+  .find .bd { font-size: 9.5pt; line-height: 1.42; }
+  .find .bd b { color: #ffffff; font-weight: 600; }
+  .find .bd .fix { color: var(--muted); }
+
+  .setup { font-size: 9.5pt; }
+  .setup .row { padding: 2.2mm 0; border-bottom: 1px solid var(--line); }
+  .setup .row:last-child { border-bottom: 0; }
+  .setup .k { font-family: var(--mono); font-size: 8pt; color: var(--dim);
+              text-transform: uppercase; letter-spacing: 0.8px; display: block; }
+  .setup .v { color: var(--text); }
+
+  /* results */
+  table { border-collapse: collapse; width: 100%; font-size: 9.5pt; }
+  th, td { padding: 2mm 3mm; text-align: left; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); font-size: 8pt; text-transform: uppercase;
+       letter-spacing: 0.9px; color: var(--dim); font-weight: 400; }
+  td.num { text-align: right; font-family: var(--mono); }
+  td.off { color: var(--off); }
+  td.on  { color: var(--on); }
+  tr.key td { font-weight: 600; }
+  tr:last-child td { border-bottom: 0; }
+
+  figure { margin: 0; }
+  figure img { width: 100%; display: block; }
+
+  /* The accent rule on each card already delimits this block, so no
+     container border here. */
+  .takeaways { display: flex; gap: 4mm; margin-top: 7mm; }
+  .takeaway { flex: 1; border-top: 2px solid var(--accent); padding-top: 3mm; }
+  .takeaway .t { font-family: var(--display); font-size: 10.5pt; font-weight: 600;
+                 margin-bottom: 1.5mm; }
+  .takeaway .d { font-size: 8.8pt; color: var(--muted); line-height: 1.42; }
+</style>
+</head>
+<body>
+
+<!-- ========================= 1. TITLE ========================= -->
+<section class="slide">
+  <div class="eyebrow">Team Phishers &nbsp;/&nbsp; Intermediate track</div>
+
+  <div class="title-block">
+    <h1>DoS Stress-Testing &amp;<br>Auto-Mitigation for<br>AI Inference Servers</h1>
+    <div class="sub">Cost-aware admission control in front of a vLLM endpoint</div>
+  </div>
+
+  <div class="byline">
+    <div>
+      <div class="team">Team Phishers</div>
+      <div class="names">Mena Abdelmoneim &nbsp;&middot;&nbsp; Salama Albedwawi &nbsp;&middot;&nbsp; Rewan Ramadan</div>
+    </div>
+    <div class="target">
+      vLLM 0.29.0 &nbsp;/&nbsp; Qwen2.5-0.5B-Instruct &nbsp;/&nbsp; NVIDIA Tesla T4<br>
+      github.com/mena-04/DoS-Stress-Testing
+    </div>
+  </div>
+
+  <div class="claim">
+    Under an eight-way flood of 512-token generations, turning the gateway on cut legitimate p95
+    latency from <strong>9.55 s to 1.32 s</strong> while raising the number of legitimate requests
+    answered from <strong>3 to 15</strong> &mdash; and rejected none of them. Latency and throughput
+    improving together is what separates protecting users from refusing them.
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="v">7.2&times;</div><div class="k">lower legitimate p95 under attack</div></div>
+    <div class="kpi"><div class="v">5.0&times;</div><div class="k">more legitimate requests served</div></div>
+    <div class="kpi"><div class="v">50%</div><div class="k">of attacker traffic rejected</div></div>
+    <div class="kpi"><div class="v">0</div><div class="k">legitimate requests rejected</div></div>
+  </div>
+
+  <div class="stamp"><span>Measured on the GPU, not simulated</span><span>01 / 05</span></div>
+</section>
+
+<!-- ======================= 2. OBJECTIVE ======================= -->
+<section class="slide">
+  <div class="shead">
+    <span class="num">01</span>
+    <h2>Project objective</h2>
+    <span class="tag">who deploys it &middot; what it replaces</span>
+  </div>
+
+  <div class="body">
+  <div class="lead">The unit of load on an inference server is the <em>token</em>, not the request.
+  Every rate limiter in common use disagrees.</div>
+
+  <div class="cols">
+    <div class="c55">
+      <p><code>nginx limit_req</code>, API-gateway requests-per-second rules and WAF throttles all
+      count <strong>requests</strong>, because on a conventional web service requests cost roughly
+      the same. On an LLM endpoint they do not: a 24-token chat reply and a 2048-token generation
+      differ in GPU cost by nearly three orders of magnitude, and both are one well-formed
+      request.</p>
+
+      <h3>Who deploys this</h3>
+      <p class="mut">A team self-hosting an open-weights model behind a public or partner-facing
+      API, without per-tenant GPU isolation &mdash; the normal case, since dedicating a GPU per
+      tenant is what self-hosting avoids.</p>
+
+      <h3>What it replaces</h3>
+      <p class="mut">It takes the position an API gateway already occupies, speaks the same
+      OpenAI-compatible protocol, and swaps the requests-per-second rule living there for a
+      <strong>token-cost budget</strong>. The endpoint URL moves by one port; the model, the server
+      and the client are untouched.</p>
+    </div>
+
+    <div class="c40">
+      <div class="panel">
+        <h3>The attack needs no volume</h3>
+        <div class="calc">
+          <div class="row"><span class="lbl">decode, measured on T4</span><span class="val">0.035 s / token</span></div>
+          <div class="row"><span class="lbl">one 1024-token generation</span><span class="val">&asymp; 36 s</span></div>
+          <div class="row"><span class="lbl">vLLM launched with</span><span class="val">--max-num-seqs 8</span></div>
+          <div class="row tot"><span class="lbl">8 requests hold the GPU for</span><span class="val">36 s</span></div>
+        </div>
+        <p class="mut" style="margin:4mm 0 0 0; font-size:9pt;">Eight requests is a rate no
+        plausible RPS budget would block and no anomaly rule would call a flood. No botnet, no
+        spoofing, no volume &mdash; just a large <code>max_tokens</code>.</p>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <div class="band">
+    <div>
+      <div class="bh">Why this approach now / 01</div>
+      <div class="bt">vLLM's continuous batching and paged KV cache make the scarce resource
+      <b>countable</b> &mdash; sequence slots and KV blocks, with a known limit &mdash; rather than
+      diffuse CPU time. There is a number to admit against.</div>
+    </div>
+    <div>
+      <div class="bh">Why this approach now / 02</div>
+      <div class="bt">vLLM exports <code>num_requests_running</code> and
+      <code>num_requests_waiting</code> on a Prometheus endpoint, so a proxy can read the backend's
+      <b>real queue</b> instead of inferring it from response times, which is a lagging signal.</div>
+    </div>
+    <div>
+      <div class="bh">Why not a learned detector alone</div>
+      <div class="bt">Shedding has to be correct on the <b>first</b> request of an attack it has
+      never seen, and a model cannot promise that. The two required mechanisms are deterministic
+      and auditable; the VAE only tunes their parameters.</div>
+    </div>
+  </div>
+
+  <div class="stamp"><span>Project objective</span><span>02 / 05</span></div>
+</section>
+
+<!-- ======================= 3. SOLUTION ======================== -->
+<section class="slide">
+  <div class="shead">
+    <span class="num">02</span>
+    <h2>Proposed solution</h2>
+    <span class="tag">two required mechanisms + one optional</span>
+  </div>
+
+  <div class="body">
+  <div class="flow">
+    <div class="box">
+      <span class="hd">Load generator</span>
+      <span class="bd">normal &middot; sudden spike &middot; sustained flood &middot; low-and-slow.
+      Sends <code>X-Client-ID</code>. Never retries a rejection.</span>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="box mid">
+      <span class="hd">Mitigation gateway :8080</span>
+      <span class="bd">FastAPI reverse proxy. Three admission layers. Writes every decision and
+      its reason.</span>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="box">
+      <span class="hd">vLLM :8000</span>
+      <span class="bd">Qwen2.5-0.5B on a T4, <code>--max-num-seqs 8</code>. Its
+      <code>/metrics</code> queue depth feeds back into layer 2.</span>
+    </div>
+    <div class="arrow">&rarr;</div>
+    <div class="box">
+      <span class="hd">Per-request log</span>
+      <span class="bd"><code>gateway.jsonl</code> and a sampled state series, joined on request ID
+      to produce every number here.</span>
+    </div>
+  </div>
+
+  <div class="mechs">
+    <div class="mech">
+      <div class="tagn">MECHANISM 01 &middot; 429</div>
+      <h4>Dual token bucket, charged on cost</h4>
+      <p>One bucket meters request rate. The second meters <strong>cost</strong>, charged
+      <code>prompt_tokens + max_tokens</code> <strong>at admission</strong> &mdash; the true cost is
+      only known once a generation ends, by which time the GPU time is spent. An omitted
+      <code>max_tokens</code> is charged the default, not zero; <code>n</code> and
+      <code>best_of</code> multiply the charge.</p>
+    </div>
+    <div class="mech">
+      <div class="tagn">MECHANISM 02 &middot; 503</div>
+      <h4>Queue cap with fast rejection</h4>
+      <p><code>global_max_inflight</code> is held <strong>at</strong> the backend's
+      <code>--max-num-seqs</code>. Admit more and the queue still forms, but inside vLLM where it
+      cannot be reordered or shed. Past the cap a request waits 200 ms, then gets a 503. Under
+      pressure, shedding is fair-share by recent token cost, with a reserved lane partitioned on
+      request cost rather than identity.</p>
+    </div>
+    <div class="mech">
+      <div class="tagn">MECHANISM 03 &middot; OPTIONAL</div>
+      <h4>VAE novelty detection</h4>
+      <p>A variational autoencoder over a 12-feature per-client window, trained
+      <strong>on normal traffic only</strong> and scoring reconstruction error as novelty &mdash; so
+      no attack is ever labelled and nothing leaks across the train/test boundary. It tunes bucket
+      multipliers rather than blocking, decays instead of latching, and fails open.</p>
+    </div>
+  </div>
+  </div>
+
+  <div class="band">
+    <div style="flex:0 0 46%">
+      <div class="bandtitle">Every refusal is legible, and immediate</div>
+      <div class="bt" style="margin-bottom:3mm;">A caller that waits 30 seconds for a 503 has
+      already been denied service, so each rejection carries its reason and a
+      <code>Retry-After</code>.</div>
+      <table class="codes">
+        <tr><td class="st">429</td><td class="rs">rate_limit_requests &middot; rate_limit_cost &middot; client_concurrency &middot; cost_exceeds_budget &middot; anomaly_shed</td></tr>
+        <tr><td class="st">503</td><td class="rs">queue_pressure &middot; queue_timeout &middot; global_capacity</td></tr>
+        <tr><td class="st">413</td><td class="rs">body_too_large</td></tr>
+      </table>
+    </div>
+    <div>
+      <div class="bandtitle">Three rules that protect the measurement, not the server</div>
+      <div class="bt">
+      <b>1.</b> The gateway never reads <code>X-Traffic-Label</code>. Branching on ground truth
+      would turn "attacker rejection rate" into a measurement of the label rather than of the
+      defence.<br>
+      <b>2.</b> Mitigation-off still goes through the gateway, so the proxy hop appears in both
+      arms. A baseline that bypassed it would credit the mitigation with removing a cost it never
+      added.<br>
+      <b>3.</b> The generator never retries a 429 or 503. A retrying client turns rejection into
+      amplification and makes the rejection rate meaningless.
+      </div>
+    </div>
+  </div>
+
+  <div class="stamp"><span>Proposed solution</span><span>03 / 05</span></div>
+</section>
+
+<!-- ====================== 4. VALIDATION ======================= -->
+<section class="slide">
+  <div class="shead">
+    <span class="num">03</span>
+    <h2>Solution validation</h2>
+    <span class="tag">four negative results, four design changes</span>
+  </div>
+
+  <div class="body">
+  <div class="cols">
+    <div class="c40">
+      <div class="setup">
+        <div class="row"><span class="k">Target service</span><span class="v">Real vLLM 0.29.0 on a Tesla T4. Real weights, real Prometheus metrics.</span></div>
+        <div class="row"><span class="k">Load profiles</span><span class="v">Normal, sudden spike, sustained flood, low-and-slow, plus a two-client cheap-vs-expensive probe.</span></div>
+        <div class="row"><span class="k">Ablation</span><span class="v">Four configs on one flag: <code>off</code>, <code>ratelimit</code>, <code>ratelimit_queue</code>, <code>full</code>.</span></div>
+        <div class="row"><span class="k">Automated tests</span><span class="v">75 unit and integration tests, including end-to-end runs over real sockets.</span></div>
+        <div class="row"><span class="k">GPU-free repro</span><span class="v">A stand-in calibrated to the measured T4 timing, so saturation reproduces on a laptop and in CI.</span></div>
+        <div class="row"><span class="k">Statistical care</span><span class="v">Nearest-rank percentiles over successful requests only; a fast 503 is a failure, not a quick success.</span></div>
+      </div>
+    </div>
+
+    <div class="c55">
+      <p class="mut" style="margin-bottom:4mm;">The mitigation was the easy half. Most of the work
+      went into tests that appeared to pass while measuring nothing.</p>
+
+      <div class="find">
+        <span class="id">a</span>
+        <span class="bd"><b>The first flood did not overload anything.</b> p50 5.603 s, p95 5.700 s,
+        max 5.701 s &mdash; three values inside 0.1 s means one batch and no queue. Prefix caching
+        made 50 identical prompts nearly free, and KV capacity exceeded demand 9&times;.
+        <span class="fix">Changed: randomised prompts, caching off, a concurrency sweep.</span></span>
+      </div>
+      <div class="find">
+        <span class="id">b</span>
+        <span class="bd"><b>Queue depth read zero when the queue was deepest.</b> The sampler
+        scraped <code>/metrics</code> inside a bare <code>except: pass</code> and read a missing
+        value as <code>0</code> &mdash; and <code>/metrics</code> is what stops answering under load.
+        <span class="fix">Changed: an absent snapshot is unknown, never empty, and staleness is
+        recorded.</span></span>
+      </div>
+      <div class="find">
+        <span class="id">c</span>
+        <span class="bd"><b>Identity rotation defeated every per-client defence.</b> Eight client
+        IDs, zero rejections, legitimate p95 4.0 s. Not a bug &mdash; per-client buckets dilute under
+        rotation by construction.
+        <span class="fix">Changed: a reserved lane partitioned on request cost, which never asks
+        who is calling.</span></span>
+      </div>
+      <div class="find">
+        <span class="id">d</span>
+        <span class="bd"><b>Fair-share inverted under long requests.</b> Cost aged out of a 10 s
+        window while the request ran 36 s, so the attacker holding every slot was charged
+        <code>0.0</code> and the steady cheap client measured as 100% &mdash; legitimate traffic took
+        <b>45.5% rejection</b>.
+        <span class="fix">Changed: in-flight cost stays charged until completion, then is
+        released.</span></span>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <div class="band">
+    <div>
+      <div class="bh">Reproduce &mdash; no GPU</div>
+      <div class="bt"><code>pip install -e ".[dev]"</code><br>
+      <code>pytest</code> &nbsp;&rarr;&nbsp; 75 passed<br>
+      <code>python -m gateway.fake_vllm --max-num-seqs 8</code></div>
+    </div>
+    <div>
+      <div class="bh">Reproduce &mdash; on the GPU</div>
+      <div class="bt">Run <code>integration.ipynb</code> top to bottom: it installs vLLM, serves
+      Qwen2.5-0.5B, then drives the same load through
+      <code>configs/off.yaml</code> and <code>configs/ratelimit_queue.yaml</code>.</div>
+    </div>
+    <div>
+      <div class="bh">One run excluded, and recorded</div>
+      <div class="bt">A pass where every request returned <code>ConnectError</code> because no
+      gateway was listening. Its 35,128 attacker "requests" are refused connections returning
+      instantly, not load. It sits in <code>excluded_runs</code> with the reason rather than
+      deleted.</div>
+    </div>
+  </div>
+
+  <div class="stamp"><span>Solution validation</span><span>04 / 05</span></div>
+</section>
+
+<!-- ================== 5. RESULTS + CONCLUSIONS ================= -->
+<section class="slide">
+  <div class="shead">
+    <span class="num">04</span>
+    <h2>Results and conclusions</h2>
+    <span class="tag">same load, same GPU, one config flag apart</span>
+  </div>
+
+  <div class="body">
+  <div class="cols" style="gap:9mm;">
+    <div class="c40">
+      <table>
+        <tr><th>Metric</th><th class="num" style="text-align:right">Off</th><th class="num" style="text-align:right">On</th></tr>
+        <tr class="key"><td>Legitimate p95</td><td class="num off">9.546 s</td><td class="num on">1.323 s</td></tr>
+        <tr class="key"><td>Legitimate p50</td><td class="num off">8.867 s</td><td class="num on">0.894 s</td></tr>
+        <tr class="key"><td>Legitimate answered</td><td class="num off">3</td><td class="num on">15</td></tr>
+        <tr><td>Legitimate rejected</td><td class="num">0</td><td class="num">0</td></tr>
+        <tr><td>Attacker admitted</td><td class="num">24</td><td class="num">8</td></tr>
+        <tr><td>Attacker rejection rate</td><td class="num">0%</td><td class="num">50%</td></tr>
+        <tr><td>Attacker p95</td><td class="num">10.355 s</td><td class="num">12.113 s</td></tr>
+      </table>
+      <p class="mut" style="font-size:8.8pt; margin-top:4mm;">Capacity was <strong>reallocated</strong>,
+      not created. The attacker's own p95 rose while half its requests were refused: being an
+      expensive client became slower and less reliable, which is the incentive a cost-based
+      limiter should create.</p>
+    </div>
+
+    <div class="c55">
+      <figure>
+        <img src="figures/dark/fig1_legit_protection.png"
+             alt="Legitimate latency and throughput, mitigation off versus on">
+      </figure>
+      <p class="mut" style="font-size:8.8pt; margin-top:3mm;">The two left panels are the result;
+      the right panel is what makes it credible. Latency fell <strong>and</strong> throughput rose
+      <strong>and</strong> nothing legitimate was rejected &mdash; three facts that cannot all hold if
+      the latency win came from shedding users. A gateway that rejects 95% of traffic has an
+      excellent p95, so we never quote one without the other.</p>
+    </div>
+  </div>
+  </div>
+
+  <div class="takeaways">
+    <div class="takeaway">
+      <div class="t">Rate-limit the right quantity</div>
+      <div class="d">Eight requests, within any plausible RPS budget, took the endpoint from
+      sub-second to nine seconds. Charging tokens at admission fixed it.</div>
+    </div>
+    <div class="takeaway">
+      <div class="t">Hold the queue where you can act on it</div>
+      <div class="d">Admitting more than <code>--max-num-seqs</code> does not remove the queue, only
+      moves it out of reach. This mattered more than any threshold we tuned.</div>
+    </div>
+    <div class="takeaway">
+      <div class="t">Partition on cost, not identity</div>
+      <div class="d">Every identity-keyed defence dilutes under rotation. The mechanism that
+      survived is the one that never asks who is calling.</div>
+    </div>
+    <div class="takeaway">
+      <div class="t">The measurement is as easy to get wrong</div>
+      <div class="d">Three of four design changes came from a test that proved nothing while
+      appearing to pass. Single attacker identity on the GPU remains the open gap.</div>
+    </div>
+  </div>
+
+  <div class="stamp"><span>Results and conclusions</span><span>05 / 05</span></div>
+</section>
+
+</body>
+</html>

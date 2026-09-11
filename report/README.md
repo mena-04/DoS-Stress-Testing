@@ -1,20 +1,43 @@
-# Submission report
+# Submission deck
 
-Five pages, PDF, matching the required section order: title, project objective,
-proposed solution, solution validation, results and conclusions.
+Five 16:9 slides, PDF, matching the required section order: title, project
+objective, proposed solution, solution validation, results and conclusions.
 
-**The built PDF is committed at `report/report.pdf`.** Nothing needs to be run
-to submit it — download that file. The rest of this section is only for
+**The built deck is committed at `report/slides.pdf`.** Nothing needs to be run
+to submit it — download that file. The rest of this page is only for
 regenerating it after an edit.
 
 ```bash
-bash report/build.sh     # regenerates figures, prints report.pdf, checks the limits
+bash report/build.sh            # slides.pdf and report.pdf, with the limit check
+bash report/build.sh slides     # just the deck
 ```
 
-`build.sh` fails rather than warns if the output exceeds 5 pages or 20 MiB, so a
-paragraph added to `report.html` cannot quietly push the submission over.
+`build.sh` fails rather than warns if either output exceeds 5 pages or 20 MiB,
+so a paragraph added to a slide cannot quietly push the submission over.
 
-### Rebuilding in Colab
+`report.pdf` is the same material as a long-form A4 document. It is not the
+submission; it is kept because it has room for detail the slides cannot hold.
+
+## Fonts
+
+| Role | Family | Where it is used |
+|---|---|---|
+| Display | Artifakt, falling back to Fira Sans | Slide titles, headings, card titles |
+| Body | Aptos | All running text |
+| Mono | Cascadia Mono | Numbers, code, flags, reason codes |
+
+Artifakt is Autodesk's corporate typeface and is licensed only for Autodesk
+work, so it cannot be redistributed or installed here. The CSS asks for it
+first and falls back to **Fira Sans**, which Erik Spiekermann and Ralph du
+Carrois also designed and which is openly licensed (OFL) — the closest
+legitimate match. On a machine that has Artifakt installed, the deck picks it
+up with no change.
+
+Aptos is free from the Microsoft Download Center. Cascadia Mono is OFL and ships
+with Windows Terminal, VS Code and most Linux distributions. If a family is
+missing the deck still builds, it just substitutes.
+
+## Rebuilding in Colab
 
 Colab has matplotlib but no browser, and `apt install chromium-browser` there
 resolves to a snap stub that cannot run. Install Chrome from Google's `.deb`
@@ -30,22 +53,23 @@ Chrome commonly lingers for a minute or two after writing the file, which is
 why `build.sh` caps it with `timeout` and judges the result by the PDF on disk
 rather than by the exit status.
 
-### Rebuilding without a command line
+## Rebuilding without a command line
 
-`report.html` is self-contained apart from `figures/`, so opening it in any
+`slides.html` is self-contained apart from `figures/`, so opening it in any
 browser and printing to PDF gives the same output — it is the same rendering
-engine `build.sh` drives. Choose A4, margins "Default", and turn off headers
-and footers, or the page count grows past five.
+engine `build.sh` drives. Turn off headers and footers and set margins to
+"None", or the slide size is wrong and the page count grows past five.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `report.html` | The report. Print CSS (`@page size: A4`) drives pagination; one `<div class="page">` per printed page. |
-| `data/t4_runs.json` | Every measured number the report quotes, with the notebook commit and cell each came from. |
-| `make_figures.py` | Generates the three figures from that file. No number is introduced here. |
+| `slides.html` | The deck. `@page size: 338.667mm 190.5mm` is 13.333in x 7.5in, the standard 16:9 slide. One `<section class="slide">` per slide. |
+| `report.html` | The same material as an A4 document, for detail that does not fit on a slide. |
+| `data/t4_runs.json` | Every measured number either document quotes, with the notebook commit and cell each came from. |
+| `make_figures.py` | Generates the three figures, in a light theme for the report and a dark theme for the deck. No number is introduced here. |
 | `build.sh` | Figures, then HTML to PDF via headless Chrome, then the limit check. |
-| `figures/` | Generated output; regenerate rather than edit. |
+| `figures/`, `figures/dark/` | Generated output; regenerate rather than edit. |
 
 ## Where the numbers come from
 
@@ -63,8 +87,8 @@ instantly, not load. Keeping the exclusion visible is the point.
 ## Editing
 
 Changing a measured value means changing `data/t4_runs.json` and re-running
-`build.sh`, not editing a figure or a table cell. The table in `report.html` is
-written out in full for typesetting reasons, so if you change the data file,
-check the table against it.
+`build.sh`, not editing a figure or a table cell. The results table is written
+out in full for typesetting reasons, so if you change the data file, check the
+table against it.
 
-Team and member names are in the `.meta` block on the title page.
+Team and member names are on the title slide, in the `.byline` block.
