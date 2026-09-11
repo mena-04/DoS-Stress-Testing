@@ -39,6 +39,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(HERE, "data", "t4_runs.json")
+FLOOD = os.path.join(HERE, "data", "locust_flood.json")
 
 
 @dataclass(frozen=True)
@@ -97,6 +98,14 @@ def load() -> dict[str, dict]:
     with open(DATA) as handle:
         payload = json.load(handle)
     return {run["arm"]: run for run in payload["runs"]}
+
+
+def load_flood() -> dict[str, dict]:
+    with open(FLOOD) as handle:
+        payload = json.load(handle)
+    runs = {run["arm"]: run for run in payload["runs"]}
+    runs["_cost"] = payload["cost_distribution"]
+    return runs
 
 
 def _apply(theme: Theme) -> None:
@@ -260,13 +269,98 @@ def outcomes(runs: dict[str, dict], theme: Theme) -> str:
     return _save(fig, theme, "fig3_outcomes.png")
 
 
+def flood_headline(runs: dict[str, dict], theme: Theme) -> str:
+    """The primary result, and why two thirds of it are misleading.
+
+    Panels 2 and 3 are the ones a dashboard would show, and both say the
+    mitigation worked. Panel 1 is the one that matters, and it says the
+    opposite. They are plotted together so the two cannot be separated.
+    """
+    arms = ["off", "on"]
+    names = ["mitigation off", "mitigation on"]
+    colours = [theme.off, theme.on]
+
+    fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.2))
+
+    panels = (
+        (axes[0], [runs[a]["legit"]["success_rate"] * 100 for a in arms],
+         "Legitimate success rate", "percent of attempts", "{:.1f}", "%"),
+        (axes[1], [runs[a]["legit"]["p95_s"] for a in arms],
+         "Legitimate p95, successes only", "seconds", "{:.2f}", " s"),
+        (axes[2], [runs[a]["queue"]["max_observed_backend_queue"] for a in arms],
+         "Peak backend queue depth", "requests waiting", "{:.0f}", ""),
+    )
+    for ax, values, title, unit, fmt, suffix in panels:
+        bars = ax.bar(names, values, color=colours)
+        _annotate(ax, bars, values, theme, fmt, suffix)
+        ax.set_title(title, fontsize=10, color=theme.fg)
+        ax.set_ylabel(unit)
+        # Headroom for the value label on the taller bar.
+        ax.set_ylim(0, max(values) * 1.25 or 1)
+        if suffix == "%":
+            # Otherwise the headroom invents a 120% tick.
+            ax.set_yticks([0, 20, 40, 60, 80, 100])
+        _style(ax)
+        plt.setp(ax.get_xticklabels(), fontsize=9)
+
+    fig.suptitle(
+        "Locust flood, 4 legitimate clients against 28 attackers:  "
+        "the queue was bounded and legitimate users were still refused",
+        fontsize=10.5,
+        color=theme.fg,
+    )
+    return _save(fig, theme, "fig4_flood_headline.png")
+
+
+def cost_threshold(runs: dict[str, dict], theme: Theme) -> str:
+    """Why the reserved lane partitioned nothing: one number, misplaced."""
+    cost = runs["_cost"]
+    threshold = cost["cheap_cost_threshold_in_effect"]
+
+    # Wide and short: this sits in a narrow column beside a table.
+    fig, ax = plt.subplots(figsize=(7.2, 1.85))
+
+    ax.barh(["legitimate", "attacker"],
+            [cost["legit"]["cost_max"], cost["attacker"]["cost_max"]],
+            color=[theme.legit, theme.attacker], height=0.5)
+    for index, (label, value) in enumerate(
+        (("legit", cost["legit"]["cost_max"]),
+         ("attacker", cost["attacker"]["cost_max"]))
+    ):
+        ax.annotate(f"{value} tokens", (value, index), xytext=(6, 0),
+                    textcoords="offset points", va="center", fontsize=9,
+                    fontweight="bold", color=theme.fg)
+
+    ax.axvline(threshold, color=theme.fg, lw=1.4, ls="--")
+    # Axes fraction for y so the label cannot land outside the bar limits.
+    ax.annotate(f"cheap_cost_threshold = {threshold}",
+                xy=(threshold, 0.5), xycoords=("data", "axes fraction"),
+                xytext=(-7, 0), textcoords="offset points", ha="right",
+                va="center", fontsize=9, color=theme.fg)
+
+    ax.set_xlim(0, threshold * 1.18)
+    ax.set_xlabel("estimated cost per request  (prompt_tokens + max_tokens)")
+    ax.set_title(
+        "Both classes fell below the threshold, so both counted as cheap",
+        fontsize=10.5, color=theme.fg,
+    )
+    ax.grid(alpha=0.35, axis="x")
+    ax.set_axisbelow(True)
+    for side in ("top", "right"):
+        ax.spines[side].set_visible(False)
+    return _save(fig, theme, "fig5_cost_threshold.png")
+
+
 def build(theme: Theme) -> list[str]:
     _apply(theme)
     runs = load()
+    flood = load_flood()
     return [
         legit_protection(runs, theme),
         separation(runs, theme),
         outcomes(runs, theme),
+        flood_headline(flood, theme),
+        cost_threshold(flood, theme),
     ]
 
 

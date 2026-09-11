@@ -1,0 +1,89 @@
+{
+  "provenance": {
+    "source": "final_demo.ipynb, section B5/B6",
+    "run_pair": "demo-20260911-180828-5190b1",
+    "note": "Transcribed from results/live_before_after.csv and results/queue_depth_summary.csv, both recomputed from the raw per-request logs in results/demo_evidence.zip rather than from console output. Cost distributions are counted directly from gateway.jsonl in the same archive.",
+    "hardware": "NVIDIA Tesla T4, 16 GB, Google Colab",
+    "backend": "vLLM 0.29.0 serving Qwen/Qwen2.5-0.5B-Instruct, --max-num-seqs 8",
+    "generator": "Locust closed-loop virtual users, seed 42, flood profile",
+    "profile": "50 s total: 10 s baseline, 10-40 s attack, 10 s recovery. 4 legitimate users plus 28 attacker users, 32 total.",
+    "window": "Requests started in the 10-40 s attack window. Percentiles are over successful requests only.",
+    "anomaly_active": false,
+    "why_this_is_the_primary_result": "Four legitimate identities against 28 attacker identities for 30 s is a far more demanding test than the earlier single-attacker smoke run, and it is backed by raw logs rather than transcribed console output."
+  },
+  "runs": [
+    {
+      "arm": "off",
+      "label_in_report": "mitigation off",
+      "config": "configs/off.yaml",
+      "run_id": "demo-20260911-180828-5190b1-flood-off",
+      "legit": {
+        "attempted": 33,
+        "succeeded": 33,
+        "success_rate": 1.0,
+        "rejection_rate": 0.0,
+        "p50_s": 2.81,
+        "p95_s": 2.986
+      },
+      "attacker": {
+        "attempted": 257,
+        "succeeded": 257,
+        "success_rate": 1.0,
+        "rejection_rate": 0.0,
+        "p50_s": 3.447,
+        "p95_s": 3.743
+      },
+      "queue": {
+        "samples": 211,
+        "stale_fraction": 0.0,
+        "max_observed_backend_queue": 24
+      }
+    },
+    {
+      "arm": "on",
+      "label_in_report": "mitigation on",
+      "config": "configs/ratelimit_queue.yaml",
+      "run_id": "demo-20260911-180828-5190b1-flood-on",
+      "legit": {
+        "attempted": 96,
+        "succeeded": 8,
+        "success_rate": 0.0833,
+        "rejection_rate": 0.9167,
+        "p50_s": 0.473,
+        "p95_s": 0.63,
+        "rejection_reasons": {
+          "queue_timeout": 88
+        }
+      },
+      "attacker": {
+        "attempted": 2000,
+        "succeeded": 222,
+        "success_rate": 0.111,
+        "rejection_rate": 0.889,
+        "p50_s": 1.234,
+        "p95_s": 1.413
+      },
+      "queue": {
+        "samples": 211,
+        "stale_fraction": 0.0,
+        "max_observed_backend_queue": 0
+      }
+    }
+  ],
+  "cost_distribution": {
+    "note": "Counted over every record in the ON arm's gateway.jsonl. This is the measurement that explains the result: cheap_cost_threshold was 512, so both classes were classified cheap and the reserved lane partitioned nothing.",
+    "legit": {"n": 161, "cost_min": 48, "cost_max": 49, "distinct_client_ids": 4},
+    "attacker": {"n": 2026, "cost_min": 320, "cost_max": 322, "distinct_client_ids": 28},
+    "cheap_cost_threshold_in_effect": 512,
+    "correct_threshold_range": [50, 320]
+  },
+  "config_in_effect": {
+    "global_max_inflight": 8,
+    "upstream_max_num_seqs": 8,
+    "reserved_cheap_slots": 2,
+    "cheap_cost_threshold": 512,
+    "queue_wait_ms": 200,
+    "client_max_inflight": 4,
+    "fairshare_window_s": 10.0
+  }
+}
