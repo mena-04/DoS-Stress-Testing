@@ -63,6 +63,11 @@ class BackpressureConfig:
     # Bounded wait for an admission slot. Waiting longer than this is worse
     # than a fast 503 because the client has usually given up already.
     queue_wait_ms: int = 200
+    # Slots only cheap requests may use. This is what keeps legitimate
+    # traffic flowing when per-client limits dilute under identity rotation,
+    # because it partitions capacity by request cost rather than by identity.
+    reserved_cheap_slots: int = 4
+    cheap_cost_threshold: int = 512
     # Upstream signals, polled. High/low pairs give hysteresis so the
     # controller does not flap between shedding and admitting every tick.
     upstream_waiting_high: float = 24.0

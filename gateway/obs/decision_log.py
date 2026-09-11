@@ -123,6 +123,8 @@ class StateSampler:
         return {
             "ts": time.time(),
             "gateway_inflight": self._controller.inflight,
+            "slots_general_held": self._controller.slots.general.held,
+            "slots_reserved_held": self._controller.slots.reserved.held,
             "pressure_level": int(report.level),
             "pressure_triggers": list(report.triggers),
             "latency_ewma_ms": round(self._controller.pressure.latency_ewma_ms, 2),

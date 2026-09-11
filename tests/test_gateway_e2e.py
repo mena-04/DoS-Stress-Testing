@@ -227,6 +227,68 @@ async def test_legitimate_traffic_survives_a_flood(tuned_config, gateway):
 
 
 @pytest.mark.asyncio
+async def test_legitimate_traffic_survives_identity_rotation(tuned_config, gateway):
+    """Eight attacker identities defeat every per-client limit.
+
+    With eight IDs each one looks almost fair (a 0.125 cost share against an
+    0.111 equal share), so neither the token buckets nor fair-share ranking
+    engages. What keeps legitimate traffic flowing is the reserved lane,
+    which partitions capacity by request cost and so is indifferent to how
+    many identities the expensive traffic arrives under.
+    """
+    config = tuned_config(
+        mode="ratelimit_queue",
+        **{
+            "rate_limit.requests_per_sec": 20.0,
+            "rate_limit.requests_burst": 20.0,
+            "rate_limit.tokens_per_sec": 1e9,
+            "rate_limit.tokens_burst": 1e9,
+            "rate_limit.client_max_inflight": 4,
+            "backpressure.global_max_inflight": 8,
+            "backpressure.reserved_cheap_slots": 3,
+            "backpressure.cheap_cost_threshold": 256,
+            "backpressure.queue_wait_ms": 150,
+            "backpressure.upstream_max_num_seqs": 4,
+        },
+    )
+    client, app = await gateway(
+        config, upstream_app=fake_vllm_app(max_num_seqs=4, decode_s_per_token=0.002)
+    )
+
+    legit_results: list[int] = []
+
+    async def attacker(index: int) -> None:
+        for _ in range(6):
+            await client.post(
+                "/v1/chat/completions",
+                json=payload(EXPENSIVE, 1024),
+                headers=headers(f"attacker-{index}", "attacker"),
+            )
+
+    async def legit() -> None:
+        await asyncio.sleep(0.2)
+        for _ in range(20):
+            response = await client.post(
+                "/v1/chat/completions",
+                json=payload(CHEAP, 32),
+                headers=headers("legit-1", "legit"),
+            )
+            legit_results.append(response.status_code)
+            await asyncio.sleep(0.05)
+
+    await asyncio.gather(
+        *[attacker(i) for i in range(8)], legit(), return_exceptions=True
+    )
+
+    success = sum(1 for code in legit_results if code == 200) / len(legit_results)
+    assert success >= 0.9, f"legitimate success rate {success:.2f}"
+
+    records = read_log(app)
+    reserved = [r for r in records if r.get("slot_pool") == "reserved"]
+    assert all(r["client_id"] == "legit-1" for r in reserved)
+
+
+@pytest.mark.asyncio
 async def test_health_is_never_shed(tuned_config, gateway):
     config = tuned_config(**{"backpressure.global_max_inflight": 1})
     client, _ = await gateway(config)

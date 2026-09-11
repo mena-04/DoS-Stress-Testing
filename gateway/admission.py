@@ -22,6 +22,7 @@ from .config import GatewayConfig
 from .fairshare import FairShareController
 from .features import FeatureStore, RequestEvent
 from .ratelimit import ClientLimiter, LimiterRegistry
+from .slots import AdmissionSlots
 from .tokens import TokenEstimate
 
 # 429 means "you, specifically, are over budget"; 503 means "the system is
@@ -57,6 +58,7 @@ class Decision:
     active_clients: int = 0
     queue_wait_ms: float = 0.0
     gateway_inflight: int = 0
+    slot_pool: str | None = None
     signals: dict[str, float] = field(default_factory=dict)
     _limiter: ClientLimiter | None = None
     _event: RequestEvent | None = None
@@ -79,7 +81,11 @@ class AdmissionController:
         self.pressure = pressure
         self.fairshare = FairShareController(config.fairshare, self.features)
         self.scorer = scorer
-        self._slots = asyncio.Semaphore(config.backpressure.global_max_inflight)
+        self.slots = AdmissionSlots(
+            config.backpressure.global_max_inflight,
+            config.backpressure.reserved_cheap_slots,
+            config.backpressure.cheap_cost_threshold,
+        )
         self.inflight = 0
 
     async def acquire(
@@ -133,16 +139,14 @@ class AdmissionController:
                     return self._reject(decision, "queue_pressure", retry_after_s=1.0)
 
             started = self._clock()
-            try:
-                await asyncio.wait_for(
-                    self._slots.acquire(),
-                    timeout=config.backpressure.queue_wait_ms / 1000.0,
-                )
-            except (asyncio.TimeoutError, TimeoutError):
-                decision.queue_wait_ms = (self._clock() - started) * 1000.0
+            pool = await self.slots.acquire(
+                estimate.cost, config.backpressure.queue_wait_ms / 1000.0
+            )
+            decision.queue_wait_ms = (self._clock() - started) * 1000.0
+            if pool is None:
                 self._refund(limiter, estimate)
                 return self._reject(decision, "queue_timeout", retry_after_s=1.0)
-            decision.queue_wait_ms = (self._clock() - started) * 1000.0
+            decision.slot_pool = pool
             decision._holds_slot = True
 
         limiter.inflight += 1
@@ -157,8 +161,10 @@ class AdmissionController:
         return decision
 
     def release(self, decision: Decision, latency_ms: float, failed: bool) -> None:
-        if decision._holds_slot:
-            self._slots.release()
+        if decision._holds_slot and decision.slot_pool is not None:
+            # slot_pool itself is kept for the log record, which is written
+            # after release.
+            self.slots.release(decision.slot_pool)
             decision._holds_slot = False
         if not decision.allowed:
             return

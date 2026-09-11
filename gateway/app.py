@@ -347,6 +347,7 @@ def create_app(
             "queue_wait_ms": round(decision.queue_wait_ms, 3),
             "gateway_latency_ms": round(latency_ms, 3),
             "gateway_inflight": decision.gateway_inflight,
+            "slot_pool": decision.slot_pool,
             "pressure_level": decision.pressure_level,
             "pressure_triggers": list(decision.pressure_triggers),
             "upstream_running": decision.upstream_running,
